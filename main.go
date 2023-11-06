@@ -33,7 +33,7 @@ func main() {
 	fmt.Println(bytesWritten, err)
 
 	defer fp.Close()
-	
+
 	fp.Seek(0,0)
 	superBlock = util.Superblock{}
 	binary.Read(fp, binary.LittleEndian, &superBlock)
@@ -49,7 +49,7 @@ func main() {
 	if err == io.EOF {
 		fmt.Println(err)
 	}
-	fmt.Printf("%v\n", dataBitmap)
+	fmt.Printf("databitmap: %v\n", dataBitmap)
 
 	fp.Seek(int64(superBlock.BitmapiStartAddress),0)
 	err = binary.Read(fp, binary.LittleEndian, &inodeBitmap)	

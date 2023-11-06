@@ -1,1 +1,36 @@
-hello world
+hello world d func writeBitmap(destPtr *os.File, address int64, bitmap []uint8) error{
+    _, err2 := destPtr.Seek(address, 0)
+	err := binary.Write(destPtr, binary.LittleEndian, &bitmap)
+    if (err2 != nil || err != nil){
+		return fmt.Errorf("could not write bitmap: %v", err)
+	}
+    return nil
+}func writeBitmap(destPtr *os.File, address int64, bitmap []uint8) error{
+    _, err2 := destPtr.Seek(address, 0)
+	err := binary.Write(destPtr, binary.LittleEndian, &bitmap)
+    if (err2 != nil || err != nil){
+		return fmt.Errorf("could not write bitmap: %v", err)
+	}
+    return nil
+}func writeBitmap(destPtr *os.File, address int64, bitmap []uint8) error{
+    _, err2 := destPtr.Seek(address, 0)
+	err := binary.Write(destPtr, binary.LittleEndian, &bitmap)
+    if (err2 != nil || err != nil){
+		return fmt.Errorf("could not write bitmap: %v", err)
+	}
+    return nil
+}func writeBitmap(destPtr *os.File, address int64, bitmap []uint8) error{
+    _, err2 := destPtr.Seek(address, 0)
+	err := binary.Write(destPtr, binary.LittleEndian, &bitmap)
+    if (err2 != nil || err != nil){
+		return fmt.Errorf("could not write bitmap: %v", err)
+	}
+    return nil
+}func writeBitmap(destPtr *os.File, address int64, bitmap []uint8) error{
+    _, err2 := destPtr.Seek(address, 0)
+	err := binary.Write(destPtr, binary.LittleEndian, &bitmap)
+    if (err2 != nil || err != nil){
+		return fmt.Errorf("could not write bitmap: %v", err)
+	}
+    return nil
+}asssssssssssss

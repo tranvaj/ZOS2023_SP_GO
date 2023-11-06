@@ -87,7 +87,7 @@ func WriteData(src string, destPtr *os.File, superBlock Superblock, inodeBitmap 
 		return 0, err
 	}
 
-    availableDataBlocks, err := GetAvailableDataBlocks(dataBitmap, superBlock.BitmapStartAddress, int32(len(data)), superBlock.ClusterSize)
+    availableDataBlocks, err := GetAvailableDataBlocks(dataBitmap, superBlock.DataStartAddress, int32(len(data)), superBlock.ClusterSize)
     if err != nil {
 		return 0, err
 	}
@@ -109,10 +109,11 @@ func WriteData(src string, destPtr *os.File, superBlock Superblock, inodeBitmap 
 
         _, err2 := destPtr.Seek(int64(availableDataBlocks[dataBlockIndex]), 0)
         err = binary.Write(destPtr, binary.LittleEndian, writeData)
-        fmt.Printf("%s ", writeData)
+        //fmt.Printf("%s ", writeData)
         bytesWritten += int(superBlock.ClusterSize)
-        dataBit := (availableDataBlocks[dataBlockIndex] - superBlock.BitmapStartAddress) / superBlock.ClusterSize 
+        dataBit := (availableDataBlocks[dataBlockIndex] - superBlock.DataStartAddress) / superBlock.ClusterSize 
         dataBitmap[dataBit / 8] = setBit(dataBitmap[dataBit / 8], uint8(dataBit % 8), true)
+        //fmt.Println((availableDataBlocks[dataBlockIndex] - superBlock.DataStartAddress), superBlock.ClusterSize)
         dataBlockIndex++
         
         if (err2 != nil || err != nil){
@@ -122,7 +123,7 @@ func WriteData(src string, destPtr *os.File, superBlock Superblock, inodeBitmap 
 
     inode.NodeId = 1 + ((availableInode - superBlock.InodeStartAddress) / int32(binary.Size(PseudoInode{}))) //plus 1 because 0 is reserved for free inodes
     inode.FileSize = int32(len(data))
-    copy(inode.Direct[:], availableDataBlocks)
+    copy(inode.Direct[:], availableDataBlocks) //TODO indirect
     inode.IsDirectory = isDirectory
 
     err = writeInode(destPtr, int64(superBlock.InodeStartAddress), inode)
