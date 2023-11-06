@@ -4,6 +4,8 @@ const (
     DefaultClusterSize = 512
     IdItemFree = 0
 	BytesPerInode = 2048
+    ClusterIsFree = 0
+    InodeIsFree = 0
 )
 
 type Superblock struct {
