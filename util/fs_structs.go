@@ -6,6 +6,7 @@ const (
 	BytesPerInode = 2048
     ClusterIsFree = 0
     InodeIsFree = 0
+    AddressByteLen = 4
 )
 
 type Superblock struct {

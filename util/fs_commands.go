@@ -80,7 +80,7 @@ func Format(diskSize int, fsName string) (Superblock, []uint8, []uint8, error) {
 
 
 func WriteData(src string, destPtr *os.File, superBlock Superblock, inodeBitmap []uint8, dataBitmap []uint8, isDirectory bool) (int,error){
-    bytesWritten, dataBlockIndex := 0, 0
+    bytesWritten := 0
     inode := PseudoInode{}
     data, err := os.ReadFile(src)
     if err != nil {
@@ -97,7 +97,97 @@ func WriteData(src string, destPtr *os.File, superBlock Superblock, inodeBitmap 
         return 0, err
     }
 
-    for i := 0; i < len(availableDataBlocks); i++ {
+    for _, v := range availableDataBlocks{
+        dataBit := (v - superBlock.DataStartAddress) / superBlock.ClusterSize 
+        dataBitmap[dataBit / 8] = setBit(dataBitmap[dataBit / 8], uint8(dataBit % 8), true)
+    }
+
+    addrInOneBlock := superBlock.ClusterSize / AddressByteLen
+    //indirectTwoAddrLen := addrInOneBlock * addrInOneBlock + addrInOneBlock
+
+    directAddrLen := len(inode.Direct)
+    //indirectOneBlocksLen := int(addrInOneBlock / addrInOneBlock)
+    //indirectTwoBlocksLen := int(indirectTwoAddrLen / addrInOneBlock)
+
+    indirectBlocksNeeded := int(math.Ceil(float64(len(availableDataBlocks) - directAddrLen) / float64(addrInOneBlock)))
+    indirectBlocksSize := 0
+    
+    if indirectBlocksNeeded > 1 {
+        //+1 because need to reserve extra block that points to block full of pointers to blocks
+        //need indirect level two and one
+        indirectBlocksSize = (indirectBlocksNeeded + 1) * int(superBlock.ClusterSize)
+    } else {
+        //need only indirect level one 
+        indirectBlocksSize = indirectBlocksNeeded * int(superBlock.ClusterSize)
+    }
+    //number of addresses pointing to data blocks vs amount of data blocks for data
+    if (int(addrInOneBlock*addrInOneBlock + addrInOneBlock) + directAddrLen < len(availableDataBlocks)){
+        return 0, fmt.Errorf("file is too big (not enough references available)")
+    }
+
+    //empty slice means no indirect blocks needed
+    availableIndirectDataBlocks, err := GetAvailableDataBlocks(dataBitmap, superBlock.DataStartAddress, int32(indirectBlocksSize), superBlock.ClusterSize) 
+    indirectOneBlock := make(map[int32][]int32) 
+    indirectTwoBlock := make(map[int32]map[int32][]int32)
+    if err != nil {
+        return 0, err
+    }
+    if len(availableIndirectDataBlocks) != 0 {
+        indirectOneBlock[availableIndirectDataBlocks[0]] = make([]int32, addrInOneBlock)
+        end := int(math.Min(float64(directAddrLen + int(addrInOneBlock)), float64(len(availableDataBlocks))))
+        copy(indirectOneBlock[availableIndirectDataBlocks[0]], availableDataBlocks[directAddrLen:end])
+        inode.Indirect[0] = availableIndirectDataBlocks[0]
+
+        //write indirect one
+        for i, v := range indirectOneBlock[inode.Indirect[0]]{
+            _, err2 := destPtr.Seek(int64(availableIndirectDataBlocks[0]) + int64(i) * int64(binary.Size(v)), 0)
+            err = binary.Write(destPtr, binary.LittleEndian, v)
+            if (err2 != nil || err != nil){
+                return 0, fmt.Errorf("could not write into datablock: %v, %v", err, err2)
+            }
+        }
+
+        if len(availableIndirectDataBlocks) > 1 {
+            if start := end; start <= len(availableDataBlocks) {
+                indirectBlocksNeededTwo := int(math.Ceil(float64(len(availableDataBlocks[start:])) / float64(addrInOneBlock))) 
+                indirectTwoBlock[availableIndirectDataBlocks[1]] = make(map[int32][]int32)
+                for i := 0; i < indirectBlocksNeededTwo; i++ {
+                    //i+1 because 0 is reserved for indirect level one
+                    if i == indirectBlocksNeededTwo - 1 {
+                        end = len(availableDataBlocks)
+                    } else {
+                        end = start + int(addrInOneBlock)
+                    }
+                    index := i + 1
+                    indirectTwoBlock[availableIndirectDataBlocks[1]][availableIndirectDataBlocks[index+1]] = make([]int32, addrInOneBlock)
+                    copy(indirectTwoBlock[availableIndirectDataBlocks[1]][availableIndirectDataBlocks[index+1]], availableDataBlocks[start:end])
+                    start = end
+                }
+            }
+            inode.Indirect[1] = availableIndirectDataBlocks[1]
+    
+            //write indirect two
+            i := 0
+            for k,v := range indirectTwoBlock[inode.Indirect[1]]{
+                _, err2 := destPtr.Seek(int64(inode.Indirect[1]) + int64(i) * int64(binary.Size(k)), 0)
+                err = binary.Write(destPtr, binary.LittleEndian, k)
+                if (err2 != nil || err != nil){
+                    return 0, fmt.Errorf("could not write into datablock: %v, %v", err, err2)
+                }
+    
+                for y,x := range v{
+                    _, err2 := destPtr.Seek(int64(k) + int64(y) * int64(binary.Size(x)), 0)
+                    err = binary.Write(destPtr, binary.LittleEndian, x)
+                    if (err2 != nil || err != nil){
+                        return 0, fmt.Errorf("could not write into datablock: %v, %v", err, err2)
+                    }
+                } 
+                i++
+            }
+        }
+    } 
+
+    for i, v := range availableDataBlocks {
         var writeData []byte
         if i == 0 {
             writeData = data[:]
@@ -107,15 +197,10 @@ func WriteData(src string, destPtr *os.File, superBlock Superblock, inodeBitmap 
             writeData = data[i*int(superBlock.ClusterSize):i*int(superBlock.ClusterSize) + int(superBlock.ClusterSize)]
         }
 
-        _, err2 := destPtr.Seek(int64(availableDataBlocks[dataBlockIndex]), 0)
+        _, err2 := destPtr.Seek(int64(v), 0)
         err = binary.Write(destPtr, binary.LittleEndian, writeData)
-        //fmt.Printf("%s ", writeData)
-        bytesWritten += int(superBlock.ClusterSize)
-        dataBit := (availableDataBlocks[dataBlockIndex] - superBlock.DataStartAddress) / superBlock.ClusterSize 
-        dataBitmap[dataBit / 8] = setBit(dataBitmap[dataBit / 8], uint8(dataBit % 8), true)
-        //fmt.Println((availableDataBlocks[dataBlockIndex] - superBlock.DataStartAddress), superBlock.ClusterSize)
-        dataBlockIndex++
-        
+        bytesWritten += int(superBlock.ClusterSize)     
+
         if (err2 != nil || err != nil){
             return 0, fmt.Errorf("could not write into datablock: %v, %v", err, err2)
         }
@@ -144,6 +229,120 @@ func WriteData(src string, destPtr *os.File, superBlock Superblock, inodeBitmap 
     }
 
     return bytesWritten, nil
+}
+
+func ReadFileData(destPtr *os.File, inode PseudoInode, blockSize int32) ([]byte, error) {
+    var data []byte
+    blocksRead := 0
+    dataMaxBlocks := int(math.Ceil(float64(inode.FileSize) / float64(blockSize)))
+    lastBlockDataLen := (int(inode.FileSize) - int(dataMaxBlocks-1) * int(blockSize))
+
+    for _, blockAddr := range inode.Direct {
+        if blockAddr == 0 {
+            continue
+        }
+
+        if blocksRead == dataMaxBlocks - 1 {
+            blockSize = int32(lastBlockDataLen)
+        }
+        blockData, err := readBlock(destPtr, int64(blockAddr), blockSize)
+        if err != nil {
+            return nil, err
+        }
+        blocksRead++
+        data = append(data, blockData...)
+    }
+
+    //indirect level one
+    if inode.Indirect[0] != 0 {
+        indirectOneBlockData, err := readBlockInt32(destPtr, int64(inode.Indirect[0]), blockSize)
+        if err != nil {
+            return nil, err
+        }
+    
+        for _, indirectOneBlockAddr := range indirectOneBlockData {
+            if indirectOneBlockAddr == 0 {
+                continue
+            }
+    
+            if blocksRead == dataMaxBlocks - 1 {
+                blockSize = int32(lastBlockDataLen)
+            }
+            blockData, err := readBlock(destPtr, int64(indirectOneBlockAddr), blockSize)
+            if err != nil {
+                return nil, err
+            }
+            blocksRead++
+            data = append(data, blockData...)
+        }
+    }
+    
+    //indirect level two
+    if inode.Indirect[1] != 0 {
+        indirectTwoBlockDataFirst, err := readBlockInt32(destPtr, int64(inode.Indirect[1]), blockSize)
+        if err != nil {
+            return nil, err
+        }
+        SortInt32(indirectTwoBlockDataFirst) //sort because map was used and it doesnt guarantee sortion
+
+        for _, addr := range indirectTwoBlockDataFirst{
+            if addr == 0 {
+                continue
+            }
+            indirectTwoBlockDataSecond, err := readBlockInt32(destPtr, int64(addr), blockSize)
+            if err != nil {
+                return nil, err
+            }
+            SortInt32(indirectTwoBlockDataSecond) //sort because map was used and it doesnt guarantee sortion
+            for _, addr2 := range indirectTwoBlockDataSecond{
+                if addr2 == 0 {
+                    continue
+                }
+
+                if blocksRead == dataMaxBlocks - 1 {
+                    blockSize = int32(lastBlockDataLen)
+                }
+                blockData, err := readBlock(destPtr, int64(addr2), blockSize)
+                if err != nil {
+                    return nil, err
+                }
+                blocksRead++
+                data = append(data, blockData...)
+            }
+        }
+    }
+    
+    return data, nil
+}
+
+func readBlockInt32(destPtr *os.File, blockAddr int64, blockSize int32) ([]int32, error) {
+    blockData := make([]int32, blockSize/AddressByteLen)
+    _, err := destPtr.Seek(blockAddr, 0)
+    if err != nil {
+        return nil, err
+    }
+
+    err = binary.Read(destPtr, binary.LittleEndian, &blockData)
+    if err != nil {
+        return nil, err
+    }
+
+    return blockData, nil
+}
+
+func readBlock(destPtr *os.File, blockAddr int64, blockSize int32) ([]byte, error) {
+    blockData := make([]byte, blockSize)
+    _, err := destPtr.Seek(blockAddr, 0)
+    if err != nil {
+        return nil, err
+    }
+
+    err = binary.Read(destPtr, binary.LittleEndian, &blockData)
+    if err != nil {
+        return nil, err
+    }
+
+    return blockData, nil
 }
 
 func writeInode(destPtr *os.File, address int64, inode PseudoInode) error{

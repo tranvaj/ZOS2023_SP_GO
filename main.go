@@ -73,6 +73,17 @@ func main() {
 	fmt.Println(inodeFree, binary.Size(util.PseudoInode{}))
 
 
+	var xdd []int32 = make([]int32, superBlock.ClusterSize/4)
+	fp.Seek(int64(inode.Indirect[1]),0)
+	_ = binary.Read(fp, binary.LittleEndian, &xdd)	
+	//data := util.BytesToInt32(xdd)
+	util.SortInt32(xdd)
+
+	fmt.Printf("YAAA: %v | \n", xdd)
+
+	byte_text, _ := util.ReadFileData(fp, inode, superBlock.ClusterSize)
+	fmt.Print(string(byte_text))
+
 	//bmp := util.CreateBitmap(8)
 	//println(binary.Size(bmp))
 	//fmt.Println(bmp)
