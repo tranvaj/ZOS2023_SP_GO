@@ -1,0 +1,9 @@
+make a root direcotry:
+create inode with id 1 (first inode)
+write data into inode
+
+my code: my writedata function does too much, 
+need to decouple inti create inode function and writedataintoinode function,
+
+also get rid of writing into file in writedata, 
+create a seperate "save" function (writes modifications into file)

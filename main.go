@@ -14,7 +14,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 		return
-	} 
+	}
 	fmt.Println(arr)
 
 	size, err := util.ParseFormatString(arr[1])
@@ -22,49 +22,53 @@ func main() {
 
 	superBlock, dataBitmap, inodeBitmap, _ := util.Format(int(size), "fat32")
 
-
 	//test
 	fp, err := os.OpenFile("fat32", os.O_RDWR, 0666)
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
-	bytesWritten, err := util.WriteData("testfile.txt", fp, superBlock, inodeBitmap, dataBitmap, false)
+
+	data, err := os.ReadFile("testfile.txt")
+	if err != nil {
+		return
+	}
+
+	bytesWritten, err := util.WriteData(data, fp, superBlock, inodeBitmap, dataBitmap, false)
 	fmt.Println(bytesWritten, err)
 
 	defer fp.Close()
 
-	fp.Seek(0,0)
+	fp.Seek(0, 0)
 	superBlock = util.Superblock{}
 	binary.Read(fp, binary.LittleEndian, &superBlock)
-	fmt.Printf("%+v\n",superBlock)
-
+	fmt.Printf("%+v\n", superBlock)
 
 	dataBitmap = make([]uint8, superBlock.BitmapSize)
 	inodeBitmap = make([]uint8, superBlock.BitmapiSize)
 	inode := util.PseudoInode{}
 
-	fp.Seek(int64(superBlock.BitmapStartAddress),0)
-	err = binary.Read(fp, binary.LittleEndian, &dataBitmap)	
+	fp.Seek(int64(superBlock.BitmapStartAddress), 0)
+	err = binary.Read(fp, binary.LittleEndian, &dataBitmap)
 	if err == io.EOF {
 		fmt.Println(err)
 	}
 	fmt.Printf("databitmap: %v\n", dataBitmap)
 
-	fp.Seek(int64(superBlock.BitmapiStartAddress),0)
-	err = binary.Read(fp, binary.LittleEndian, &inodeBitmap)	
+	fp.Seek(int64(superBlock.BitmapiStartAddress), 0)
+	err = binary.Read(fp, binary.LittleEndian, &inodeBitmap)
 	if err == io.EOF {
 		fmt.Println(err)
 	}
 	fmt.Printf("%v\n", inodeBitmap)
 
-	fp.Seek(int64(superBlock.InodeStartAddress),0)
-	err = binary.Read(fp, binary.LittleEndian, &inode)	
-	if err == io.EOF {
-		fmt.Println(err)
+	inode, err = util.LoadInode(fp, 2, int64(superBlock.InodeStartAddress))
+	if inode.NodeId == 0 || err != nil {
+		fmt.Printf("%d", inode.NodeId)
+		log.Fatal(err)
+		return
 	}
-
-	fmt.Printf("%+v\n",inode)
+	fmt.Printf("%+v\n", inode)
 
 	datablocks, _ := util.GetAvailableDataBlocks(dataBitmap, superBlock.DataStartAddress, 0, superBlock.ClusterSize)
 	fmt.Println(datablocks)
@@ -72,10 +76,9 @@ func main() {
 	inodeFree, _ := util.GetAvailableInodeAddress(inodeBitmap, superBlock.InodeStartAddress, int32(binary.Size(util.PseudoInode{})))
 	fmt.Println(inodeFree, binary.Size(util.PseudoInode{}))
 
-
 	var xdd []int32 = make([]int32, superBlock.ClusterSize/4)
-	fp.Seek(int64(inode.Indirect[1]),0)
-	_ = binary.Read(fp, binary.LittleEndian, &xdd)	
+	fp.Seek(int64(inode.Indirect[1]), 0)
+	_ = binary.Read(fp, binary.LittleEndian, &xdd)
 	//data := util.BytesToInt32(xdd)
 	util.SortInt32(xdd)
 
