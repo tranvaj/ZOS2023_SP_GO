@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -34,7 +35,7 @@ func main() {
 		return
 	}
 
-	bytesWritten, err := util.WriteData(data, fp, superBlock, inodeBitmap, dataBitmap, false)
+	bytesWritten, _, err := util.WriteAndSaveData(data, fp, superBlock, inodeBitmap, dataBitmap, false)
 	fmt.Println(bytesWritten, err)
 
 	defer fp.Close()
@@ -70,7 +71,7 @@ func main() {
 	}
 	fmt.Printf("%+v\n", inode)
 
-	datablocks, _ := util.GetAvailableDataBlocks(dataBitmap, superBlock.DataStartAddress, 0, superBlock.ClusterSize)
+	datablocks, _, _ := util.GetAvailableDataBlocks(dataBitmap, superBlock.DataStartAddress, 0, superBlock.ClusterSize)
 	fmt.Println(datablocks)
 
 	inodeFree, _ := util.GetAvailableInodeAddress(inodeBitmap, superBlock.InodeStartAddress, int32(binary.Size(util.PseudoInode{})))
@@ -84,9 +85,19 @@ func main() {
 
 	fmt.Printf("YAAA: %v | \n", xdd)
 
-	byte_text, _ := util.ReadFileData(fp, inode, superBlock.ClusterSize)
-	fmt.Print(string(byte_text))
+	//byte_text, _ := util.ReadFileData(fp, inode, superBlock)
+	//fmt.Print(string(byte_text))
 
+	util.AddDirItem(1, 2, "AHAHHA", fp, superBlock)
+	util.AddDirItem(1, 3, "DIS", fp, superBlock)
+	currentDir := make([]util.DirectoryItem, superBlock.ClusterSize/int32(binary.Size(util.DirectoryItem{})))
+
+	inoderootdir, _ := util.LoadInode(fp, 1, int64(superBlock.InodeStartAddress))
+	rootdir, _ := util.ReadFileData(fp, inoderootdir, superBlock)
+	buf := new(bytes.Buffer)
+	buf.Write(rootdir)
+	binary.Read(buf, binary.LittleEndian, currentDir)
+	fmt.Println(currentDir)
 	//bmp := util.CreateBitmap(8)
 	//println(binary.Size(bmp))
 	//fmt.Println(bmp)
