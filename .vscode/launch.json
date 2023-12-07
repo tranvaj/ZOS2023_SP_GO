@@ -10,7 +10,8 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceRoot}",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "args": ["testfilesystem"]
         }
     ]
 }

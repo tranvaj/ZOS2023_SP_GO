@@ -80,12 +80,12 @@ func Format(diskSize int, fsName string) (Superblock, []uint8, []uint8, error) {
 		return Superblock{}, nil, nil, fmt.Errorf("failed to create root directory: %v", err)
 	}
 
-	dataBitmap, err = loadBitmap(fp, superBlock.BitmapStartAddress, superBlock.BitmapSize)
+	dataBitmap, err = LoadBitmap(fp, superBlock.BitmapStartAddress, superBlock.BitmapSize)
 	if err != nil {
 		return Superblock{}, nil, nil, fmt.Errorf("failed to load data bitmap: %v", err)
 	}
 
-	inodeBitmap, err = loadBitmap(fp, superBlock.BitmapiStartAddress, superBlock.BitmapiSize)
+	inodeBitmap, err = LoadBitmap(fp, superBlock.BitmapiStartAddress, superBlock.BitmapiSize)
 	if err != nil {
 		return Superblock{}, nil, nil, fmt.Errorf("failed to load inode bitmap: %v", err)
 	}
@@ -96,23 +96,23 @@ func Format(diskSize int, fsName string) (Superblock, []uint8, []uint8, error) {
 // creates a new inode
 // returns the inode and modified inode bitmap
 func CreateInode(inodeBitmap []uint8, superBlock Superblock, isDirectory bool, filesize int32) (PseudoInode, []uint8, error) {
-	inodeBitmap = append([]uint8(nil), inodeBitmap...)
+	//inodeBitmap = append([]uint8(nil), inodeBitmap...)
 	inode := PseudoInode{}
-	availableInode, err := GetAvailableInodeAddress(inodeBitmap, superBlock.InodeStartAddress, int32(binary.Size(PseudoInode{})))
+	availableInode, inodeBitmapNew, err := GetAvailableInodeAddress(inodeBitmap, superBlock.InodeStartAddress, int32(binary.Size(PseudoInode{})))
 	if err != nil {
 		return PseudoInode{}, nil, err
 	}
 	inode.NodeId = 1 + ((availableInode - superBlock.InodeStartAddress) / int32(binary.Size(PseudoInode{}))) //plus 1 because 0 is reserved for free inodes
 	inode.FileSize = filesize
 	inode.IsDirectory = isDirectory
-	inodeBitmap[(inode.NodeId-1)/8] = setBit(inodeBitmap[(inode.NodeId-1)/8], uint8((inode.NodeId-1)%8), true)
-	return inode, inodeBitmap, nil
+	//inodeBitmap[(inode.NodeId-1)/8] = setBit(inodeBitmap[(inode.NodeId-1)/8], uint8((inode.NodeId-1)%8), true)
+	return inode, inodeBitmapNew, nil
 }
 
 // maps given data blocks to direct and indirect pointers, if indirect pointers are not required, returns empty maps
 // if data requries indirect pointers, returns maps that contain mapping address -> list of addresses (indirect one)
 // and mapping address -> (address -> list of addresses)
-func mapDataInode(superBlock Superblock, inode *PseudoInode, availableDataBlocks []int32, dataBitmap []uint8) (map[int32][]int32, map[int32]map[int32][]int32, error) {
+func mapDataInode(superBlock Superblock, inode *PseudoInode, availableDataBlocks []int32, dataBitmap []uint8) (map[int32][]int32, map[int32]map[int32][]int32, []uint8, error) {
 	addrInOneBlock := superBlock.ClusterSize / AddressByteLen
 	directAddrLen := len(inode.Direct)
 
@@ -129,18 +129,18 @@ func mapDataInode(superBlock Superblock, inode *PseudoInode, availableDataBlocks
 	}
 	//number of addresses pointing to data blocks vs amount of data blocks for data
 	if int(addrInOneBlock*addrInOneBlock+addrInOneBlock)+directAddrLen < len(availableDataBlocks) {
-		return nil, nil, fmt.Errorf("file is too big (not enough references available)")
+		return nil, nil, nil, fmt.Errorf("file is too big (not enough references available)")
 	}
 
 	copy(inode.Direct[:], availableDataBlocks)
 
 	//empty slice means no indirect blocks needed
 	availableIndirectDataBlocks, dataBitmapNew, err := GetAvailableDataBlocks(dataBitmap, superBlock.DataStartAddress, int32(indirectBlocksSize), superBlock.ClusterSize)
-	copy(dataBitmap, dataBitmapNew)
+	//copy(dataBitmap, dataBitmapNew) //modify slice in argument
 	indirectOneBlock := make(map[int32][]int32)
 	indirectTwoBlock := make(map[int32]map[int32][]int32)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	if len(availableIndirectDataBlocks) != 0 {
@@ -169,7 +169,7 @@ func mapDataInode(superBlock Superblock, inode *PseudoInode, availableDataBlocks
 			inode.Indirect[1] = availableIndirectDataBlocks[1]
 		}
 	}
-	return indirectOneBlock, indirectTwoBlock, nil
+	return indirectOneBlock, indirectTwoBlock, dataBitmapNew, nil
 }
 
 // writes given data into given available data blocks
@@ -250,8 +250,8 @@ func WriteAndSaveData(src []byte, destPtr *os.File, superBlock Superblock, inode
 		return 0, 0, err
 	}
 
-	//inode gets modified
-	indirectBlockOne, indirectBlockTwo, err := mapDataInode(superBlock, &inode, availableDataBlocks, dataBitmap)
+	//dataBitmap gets modified
+	indirectBlockOne, indirectBlockTwo, dataBitmap, err := mapDataInode(superBlock, &inode, availableDataBlocks, dataBitmap)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -261,7 +261,7 @@ func WriteAndSaveData(src []byte, destPtr *os.File, superBlock Superblock, inode
 		return 0, 0, err
 	}
 
-	err = saveInode(destPtr, int64(superBlock.InodeStartAddress+int32(binary.Size(inode))*(inode.NodeId-1)), inode)
+	err = saveInode(destPtr, int64(superBlock.InodeStartAddress), inode)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -278,8 +278,9 @@ func WriteAndSaveData(src []byte, destPtr *os.File, superBlock Superblock, inode
 	return bytesWritten, int(inode.NodeId), nil
 }
 
-func getInodeDataAddresses(destPtr *os.File, inode PseudoInode, superblock Superblock) ([]int32, error) {
-	addrs := make([]int32, 0)
+func getInodeDataAddresses(destPtr *os.File, inode PseudoInode, superblock Superblock) ([]int32, []int32, error) {
+	dataAddrs := make([]int32, 0)
+	indirectPtrAddrs := make([]int32, 0)
 	blocksRead := 0
 	blockSize := superblock.ClusterSize
 	dataMaxBlocks := int(math.Ceil(float64(inode.FileSize) / float64(blockSize)))
@@ -292,15 +293,16 @@ func getInodeDataAddresses(destPtr *os.File, inode PseudoInode, superblock Super
 		if blocksRead == dataMaxBlocks {
 			break
 		}
-		addrs = append(addrs, blockAddr)
+		dataAddrs = append(dataAddrs, blockAddr)
 		blocksRead++
 	}
 
 	//indirect level one
 	if inode.Indirect[0] != 0 {
+		indirectPtrAddrs = append(indirectPtrAddrs, inode.Indirect[0])
 		indirectOneBlockData, err := readBlockInt32(destPtr, int64(inode.Indirect[0]), blockSize)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		for _, indirectOneBlockAddr := range indirectOneBlockData {
@@ -311,16 +313,17 @@ func getInodeDataAddresses(destPtr *os.File, inode PseudoInode, superblock Super
 			if blocksRead == dataMaxBlocks {
 				break
 			}
-			addrs = append(addrs, indirectOneBlockAddr)
+			dataAddrs = append(dataAddrs, indirectOneBlockAddr)
 			blocksRead++
 		}
 	}
 
 	//indirect level two
 	if inode.Indirect[1] != 0 {
+		indirectPtrAddrs = append(indirectPtrAddrs, inode.Indirect[1])
 		indirectTwoBlockDataFirst, err := readBlockInt32(destPtr, int64(inode.Indirect[1]), blockSize)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		SortInt32(indirectTwoBlockDataFirst) //sort because map was used and it doesnt guarantee sortion
 
@@ -328,9 +331,10 @@ func getInodeDataAddresses(destPtr *os.File, inode PseudoInode, superblock Super
 			if addr == 0 {
 				continue
 			}
+			indirectPtrAddrs = append(indirectPtrAddrs, addr)
 			indirectTwoBlockDataSecond, err := readBlockInt32(destPtr, int64(addr), blockSize)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			SortInt32(indirectTwoBlockDataSecond) //sort because map was used and it doesnt guarantee sortion
 			for _, addr2 := range indirectTwoBlockDataSecond {
@@ -341,16 +345,16 @@ func getInodeDataAddresses(destPtr *os.File, inode PseudoInode, superblock Super
 				if blocksRead == dataMaxBlocks {
 					break
 				}
-				addrs = append(addrs, addr2)
+				dataAddrs = append(dataAddrs, addr2)
 				blocksRead++
 			}
 		}
 	}
-	return addrs, nil
+	return dataAddrs, indirectPtrAddrs, nil
 }
 
 func ReadFileData(destPtr *os.File, inode PseudoInode, superblock Superblock) ([]byte, error) {
-	addresses, err := getInodeDataAddresses(destPtr, inode, superblock)
+	addresses, _, err := getInodeDataAddresses(destPtr, inode, superblock)
 	blockSize := superblock.ClusterSize
 	dataMaxBlocks := int(math.Ceil(float64(inode.FileSize) / float64(blockSize)))
 	lastBlockDataLen := (int(inode.FileSize) - int(dataMaxBlocks-1)*int(blockSize))
@@ -402,9 +406,16 @@ func readBlock(destPtr *os.File, blockAddr int64, blockSize int32) ([]byte, erro
 	return blockData, nil
 }
 
-func LoadInode(destPtr *os.File, inodeId int32, address int64) (PseudoInode, error) {
+func LoadSuperBlock(fs *os.File) Superblock {
+	fs.Seek(0, 0)
+	superBlock := Superblock{}
+	binary.Read(fs, binary.LittleEndian, &superBlock)
+	return superBlock
+}
+
+func LoadInode(destPtr *os.File, inodeId int32, inodeStartAddress int64) (PseudoInode, error) {
 	inode := PseudoInode{}
-	_, err2 := destPtr.Seek(address+int64(binary.Size(inode)*int(inodeId-1)), 0)
+	_, err2 := destPtr.Seek(inodeStartAddress+int64(binary.Size(inode)*int(inodeId-1)), 0)
 
 	err := binary.Read(destPtr, binary.LittleEndian, &inode)
 	if err2 != nil || err != nil || inodeId == 0 {
@@ -413,8 +424,9 @@ func LoadInode(destPtr *os.File, inodeId int32, address int64) (PseudoInode, err
 	return inode, nil
 }
 
-func saveInode(destPtr *os.File, address int64, inode PseudoInode) error {
-	_, err2 := destPtr.Seek(address, 0)
+func saveInode(destPtr *os.File, inodeStartAddress int64, inode PseudoInode) error {
+	//	err = saveInode(destPtr, int64(superBlock.InodeStartAddress+int32(binary.Size(inode))*(inode.NodeId-1)), inode)
+	_, err2 := destPtr.Seek(int64(inodeStartAddress+int64(binary.Size(inode))*int64(inode.NodeId-1)), 0)
 	err := binary.Write(destPtr, binary.LittleEndian, &inode)
 	if err2 != nil || err != nil {
 		return fmt.Errorf("could not write inode: %v", err)
@@ -443,21 +455,65 @@ func CreateDirectory(destPtr *os.File, superBlock Superblock, inodeBitmap []uint
 	return WriteAndSaveData(buf.Bytes(), destPtr, superBlock, inodeBitmap, dataBitmap, true)
 }
 
-func AddDirItem(currentDirInodeId int32, dirItemNodeId int32, dirItemName string, destPtr *os.File, superBlock Superblock) {
-	oldDataBuf := new(bytes.Buffer)
-	newDataBuf := new(bytes.Buffer)
-	currentDir := make([]DirectoryItem, superBlock.ClusterSize/int32(binary.Size(DirectoryItem{})))
+// todo create a function that will modify inodes and remove data (set inode id = 0 and only need to change databitmap + inode bitmap)
+func checkIfDirItemExists(currentDir []DirectoryItem, dirItemName string) bool {
+	for _, v := range currentDir {
+		if string(v.ItemName[:]) == dirItemName {
+			return true
+		}
+	}
+	return false
+}
 
+func LoadDirectory(fs *os.File, dirInode PseudoInode, superBlock Superblock) ([]DirectoryItem, error) {
+	buf := new(bytes.Buffer)
+
+	dir := make([]DirectoryItem, superBlock.ClusterSize/int32(binary.Size(DirectoryItem{})))
+
+	dirInBytes, err := ReadFileData(fs, dirInode, superBlock)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = buf.Write(dirInBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	err = binary.Read(buf, binary.LittleEndian, dir)
+	if err != nil {
+		return nil, err
+	}
+	return dir, nil
+}
+
+func AddDirItem(currentDirInodeId int32, dirItemNodeId int32, dirItemName string, fs *os.File, superBlock Superblock) error {
+	newDataBuf := new(bytes.Buffer)
 	dirItem := DirectoryItem{}
 	dirItem.Inode = dirItemNodeId
 	copy(dirItem.ItemName[:], []byte(dirItemName))
-	currentDirInode, err := LoadInode(destPtr, currentDirInodeId, int64(superBlock.InodeStartAddress))
 
-	usedDataBlocks, err := getInodeDataAddresses(destPtr, currentDirInode, superBlock)
-	data, err := ReadFileData(destPtr, currentDirInode, superBlock)
+	currentDirInode, err := LoadInode(fs, currentDirInodeId, int64(superBlock.InodeStartAddress))
+	if err != nil {
+		return err
+	}
 
-	oldDataBuf.Write(data)
-	binary.Read(oldDataBuf, binary.LittleEndian, currentDir)
+	currentDirInode.References++
+
+	currentDir, err := LoadDirectory(fs, currentDirInode, superBlock)
+	if err != nil {
+		return err
+	}
+
+	usedDataBlocks, _, err := getInodeDataAddresses(fs, currentDirInode, superBlock)
+	if err != nil {
+		return err
+	}
+
+	if checkIfDirItemExists(currentDir, dirItemName) {
+		return fmt.Errorf("file with same name already exists")
+	}
+
 	for i, v := range currentDir {
 		if i == 0 || i == 1 {
 			continue
@@ -468,10 +524,126 @@ func AddDirItem(currentDirInodeId int32, dirItemNodeId int32, dirItemName string
 		}
 	}
 	err = binary.Write(newDataBuf, binary.LittleEndian, currentDir)
-	saveDataBlocks(newDataBuf.Bytes(), destPtr, superBlock, usedDataBlocks)
 	if err != nil {
-		return
+		return err
 	}
+
+	_, err = saveDataBlocks(newDataBuf.Bytes(), fs, superBlock, usedDataBlocks)
+	if err != nil {
+		return err
+	}
+
+	err = saveInode(fs, int64(superBlock.InodeStartAddress), currentDirInode)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func RemoveDirItem(currentDirInodeId int32, dirItemName string, destPtr *os.File, superBlock Superblock) error {
+	oldDataBuf := new(bytes.Buffer)
+	newDataBuf := new(bytes.Buffer)
+	currentDir := make([]DirectoryItem, superBlock.ClusterSize/int32(binary.Size(DirectoryItem{})))
+
+	currentDirInode, err := LoadInode(destPtr, currentDirInodeId, int64(superBlock.InodeStartAddress))
+	if err != nil {
+		return err
+	}
+
+	currentDirInode.References--
+
+	usedDataBlocks, _, err := getInodeDataAddresses(destPtr, currentDirInode, superBlock)
+	if err != nil {
+		return err
+	}
+
+	dirInBytes, err := ReadFileData(destPtr, currentDirInode, superBlock)
+	if err != nil {
+		return err
+	}
+
+	_, err = oldDataBuf.Write(dirInBytes)
+	if err != nil {
+		return err
+	}
+	err = binary.Read(oldDataBuf, binary.LittleEndian, currentDir)
+	if err != nil {
+		return err
+	}
+
+	if !checkIfDirItemExists(currentDir, dirItemName) {
+		return fmt.Errorf("file does not exist")
+	}
+
+	for i, v := range currentDir {
+		if i == 0 || i == 1 {
+			continue
+		}
+		if string(v.ItemName[:]) == dirItemName {
+			v.Inode = 0
+			currentDir[i] = DirectoryItem{}
+			break
+		}
+	}
+
+	//transform data back into bytes
+	err = binary.Write(newDataBuf, binary.LittleEndian, currentDir)
+	if err != nil {
+		return err
+	}
+
+	//save data
+	_, err = saveDataBlocks(newDataBuf.Bytes(), destPtr, superBlock, usedDataBlocks)
+	if err != nil {
+		return err
+	}
+
+	err = saveInode(destPtr, int64(superBlock.InodeStartAddress), currentDirInode)
+	if err != nil {
+		return err
+	}
+
+	if currentDirInode.References == 0 {
+		err = deleteFile(destPtr, currentDirInode, superBlock)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func deleteFile(fs *os.File, inode PseudoInode, superBlock Superblock) error {
+	inodeBitmap, err := LoadBitmap(fs, superBlock.BitmapiStartAddress, superBlock.BitmapiSize)
+	dataBitmap, err := LoadBitmap(fs, superBlock.BitmapStartAddress, superBlock.BitmapSize)
+	dataAddresses, indirectPtrAddresess, err := getInodeDataAddresses(fs, inode, superBlock)
+
+	//inodeBitmap[(inode.NodeId-1)/8] = setBit(inodeBitmap[(inode.NodeId-1)/8], uint8((inode.NodeId-1)%8), true)
+	inodeBitmap = SetValueInInodeBitmap(inodeBitmap, inode)
+	dataBitmap = SetValuesInDataBitmap(dataBitmap, dataAddresses, superBlock.DataStartAddress, superBlock.ClusterSize, false)
+	dataBitmap = SetValuesInDataBitmap(dataBitmap, indirectPtrAddresess, superBlock.DataStartAddress, superBlock.ClusterSize, false)
+
+	inode.NodeId = 0
+	err = saveInode(fs, int64(superBlock.InodeStartAddress), inode)
+	if err != nil {
+		return err
+	}
+	err = saveBitmap(fs, int64(superBlock.BitmapStartAddress), dataBitmap)
+	if err != nil {
+		return err
+	}
+	err = saveBitmap(fs, int64(superBlock.BitmapiStartAddress), inodeBitmap)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func SetValueInInodeBitmap(inodeBitmap []uint8, inode PseudoInode) []uint8 {
+	bitmap := append([]uint8(nil), inodeBitmap...)
+	bitmap[(inode.NodeId-1)/8] = setBit(bitmap[(inode.NodeId-1)/8], uint8((inode.NodeId-1)%8), true)
+	return bitmap
 }
 
 func saveBitmap(destPtr *os.File, address int64, bitmap []uint8) error {
@@ -483,9 +655,9 @@ func saveBitmap(destPtr *os.File, address int64, bitmap []uint8) error {
 	return nil
 }
 
-func loadBitmap(destPtr *os.File, startAddress int32, bitmapSize int32) ([]uint8, error) {
+func LoadBitmap(destPtr *os.File, bitmapStartAddress int32, bitmapSize int32) ([]uint8, error) {
 	bitmap := make([]uint8, bitmapSize)
-	_, err2 := destPtr.Seek(int64(startAddress), 0)
+	_, err2 := destPtr.Seek(int64(bitmapStartAddress), 0)
 	err := binary.Read(destPtr, binary.LittleEndian, &bitmap)
 	if err2 != nil || err != nil {
 		return nil, fmt.Errorf("could not write bitmap: %v", err)
@@ -493,20 +665,26 @@ func loadBitmap(destPtr *os.File, startAddress int32, bitmapSize int32) ([]uint8
 	return bitmap, nil
 }
 
-func GetAvailableDataBlocks(bitmap []uint8, startAddress int32, dataSize int32, blockSize int32) ([]int32, []uint8, error) {
+func SetValuesInDataBitmap(dataBitmap []uint8, dataBlockAddresses []int32, dataStartAddress int32, blockSize int32, value bool) []uint8 {
+	bitmap := append([]uint8(nil), dataBitmap...)
+	for _, v := range dataBlockAddresses {
+		dataBit := (v - dataStartAddress) / blockSize
+		bitmap[dataBit/8] = setBit(bitmap[dataBit/8], uint8(dataBit%8), value)
+	}
+	return bitmap
+}
+
+func GetAvailableDataBlocks(bitmap []uint8, dataStartAddress int32, dataSize int32, blockSize int32) ([]int32, []uint8, error) {
 	bitmap = append([]uint8(nil), bitmap...)
 	blockAddressList := make([]int32, 0)
 	allocatedSize := 0
 	for i := 0; i < len(bitmap); i++ {
 		for j := 0; j < 8; j++ {
 			if allocatedSize >= int(dataSize) {
-				for _, v := range blockAddressList {
-					dataBit := (v - startAddress) / blockSize
-					bitmap[dataBit/8] = setBit(bitmap[dataBit/8], uint8(dataBit%8), true)
-				}
+				bitmap = SetValuesInDataBitmap(bitmap, blockAddressList, dataStartAddress, blockSize, true)
 				return blockAddressList, bitmap, nil
 			}
-			blockAddress := startAddress + int32(i*8*int(blockSize)) + int32(j)*blockSize
+			blockAddress := dataStartAddress + int32(i*8*int(blockSize)) + int32(j)*blockSize
 			if getBit(bitmap[i], int32(j)) == ClusterIsFree {
 				blockAddressList = append(blockAddressList, blockAddress)
 				allocatedSize += int(blockSize)
@@ -516,16 +694,18 @@ func GetAvailableDataBlocks(bitmap []uint8, startAddress int32, dataSize int32, 
 	return nil, nil, fmt.Errorf("not enough available data blocks")
 }
 
-func GetAvailableInodeAddress(bitmap []uint8, startAddress int32, inodeSize int32) (int32, error) {
+func GetAvailableInodeAddress(bitmap []uint8, startAddress int32, inodeSize int32) (int32, []uint8, error) {
+	bitmap = append([]uint8(nil), bitmap...)
 	for i := 0; i < len(bitmap); i++ {
 		for j := 0; j < 8; j++ {
 			blockAddress := startAddress + int32(i*8*int(inodeSize)) + int32(j)*inodeSize
 			if getBit(bitmap[i], int32(j)) == InodeIsFree {
-				return blockAddress, nil
+				bitmap[i] = setBit(bitmap[i], uint8(j), true)
+				return blockAddress, bitmap, nil
 			}
 		}
 	}
-	return -1, fmt.Errorf("no free inodes")
+	return -1, nil, fmt.Errorf("no free inodes")
 }
 
 func getBit(num uint8, position int32) uint8 {

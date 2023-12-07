@@ -1,27 +1,200 @@
 package main
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"log"
 	"os"
+	"strings"
 	"tranvaj/ZOS2023_SP_GO/util"
 )
 
 func main() {
-	arr, err := util.LoadCommand()
-	if err != nil {
-		log.Fatal(err)
+	var fs *os.File
+	var currentDirInode util.PseudoInode
+	fsExists := true
+	var superBlock util.Superblock
+	var dataBitmap []uint8
+	var inodeBitmap []uint8
+	var currentDir []util.DirectoryItem
+	currentDirInodeId := int32(1)
+	initialized := false
+	currentPath := "/"
+
+	if len(os.Args[1:]) != 1 {
+		fmt.Println("Wrong amount of arguments. The argument should be the name of the filesystem.")
 		return
 	}
-	fmt.Println(arr)
+	FSNAME := os.Args[1:][0]
 
-	size, err := util.ParseFormatString(arr[1])
-	fmt.Println(size, err)
+	//check if filesystem exists
+	if _, err := os.Stat(FSNAME); err != nil {
+		fsExists = false
+	} else {
+		initialized = true
+		fs, _ = os.OpenFile(FSNAME, os.O_RDWR, 0666)
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+		defer fs.Close()
+	}
 
-	superBlock, dataBitmap, inodeBitmap, _ := util.Format(int(size), "fat32")
+	for {
+		arr, err := util.LoadCommand()
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+
+		if !fsExists && strings.ToLower(arr[0]) != "format" {
+			fmt.Println("Filesystem does not exist. Please format it first.")
+			continue
+		}
+
+		if initialized {
+			superBlock = util.LoadSuperBlock(fs)
+			currentDirInode, err = util.LoadInode(fs, currentDirInodeId, int64(superBlock.InodeStartAddress))
+			if err != nil {
+				log.Fatal(err)
+				return
+			}
+			dataBitmap, err = util.LoadBitmap(fs, superBlock.BitmapStartAddress, superBlock.BitmapSize)
+			if err != nil {
+				log.Fatal(err)
+				return
+			}
+			inodeBitmap, err = util.LoadBitmap(fs, superBlock.BitmapiStartAddress, superBlock.BitmapiSize)
+			if err != nil {
+				log.Fatal(err)
+				return
+			}
+			currentDir, err = util.LoadDirectory(fs, currentDirInode, superBlock)
+			if err != nil {
+				fmt.Println("could not load directory: " + err.Error())
+				break
+			}
+		}
+
+		switch command := strings.ToLower(arr[0]); command {
+		case "format":
+			size, err := util.ParseFormatString(arr[1])
+			if err != nil {
+				log.Fatal(err)
+				return
+			}
+			_, _, _, err = util.Format(int(size), FSNAME)
+			if err != nil {
+				log.Fatal(err)
+				return
+			}
+			fs, _ = os.OpenFile(FSNAME, os.O_RDWR, 0666)
+			if err != nil {
+				log.Fatal(err)
+				return
+			}
+			defer fs.Close()
+			initialized = true
+			fsExists = true
+		case "incp":
+			//loads file from host OS to the filesystem
+			if len(arr) != 3 {
+				fmt.Println("Wrong amount of arguments. The arguments should be the name of the path to the file and the name of the file in the filesystem.")
+				break
+			}
+			data, err := os.ReadFile(arr[1])
+			if err != nil {
+				return
+			}
+			_, fileInodeId, err := util.WriteAndSaveData(data, fs, superBlock, []uint8{}, []uint8{}, false)
+			if err != nil {
+				fmt.Println("could not write data to the filesystem: " + err.Error())
+				break
+			}
+
+			err = util.AddDirItem(currentDirInode.NodeId, int32(fileInodeId), arr[2], fs, superBlock)
+			if err != nil {
+				fmt.Println("could not add directory item: " + err.Error())
+				break
+			}
+		case "cat":
+			//prints the content of the file
+			if len(arr) != 2 {
+				fmt.Println("Wrong amount of arguments. The argument should be the name of the file in the filesystem.")
+				break
+			}
+			for i, v := range currentDir {
+				if string(v.ItemName[:]) == arr[1] {
+					inode, err := util.LoadInode(fs, v.Inode, int64(superBlock.InodeStartAddress))
+					if err != nil {
+						fmt.Println("could not load inode: " + err.Error())
+						break
+					}
+					data, err := util.ReadFileData(fs, inode, superBlock)
+					if err != nil {
+						fmt.Println("could not read data: " + err.Error())
+						break
+					}
+					fmt.Println(string(data))
+					break
+				}
+				if i == len(currentDir)-1 {
+					fmt.Println("file not found")
+				}
+			}
+		case "ls":
+			//prints the content of the directory and inode id
+			if len(arr) != 1 {
+				fmt.Println("Wrong amount of arguments.")
+				break
+			}
+			fmt.Println("Current directory: " + currentPath)
+			//print table header
+			fmt.Printf("%-20s %-20s\n", "Name", "Inode")
+			for _, v := range currentDir {
+				if v.Inode == 0 {
+					continue
+				}
+				fmt.Printf("%-20s %-20d\n", string(v.ItemName[:]), v.Inode)
+			}
+		case "mkdir":
+			//creates a directory
+			if len(arr) != 2 {
+				fmt.Println("Wrong amount of arguments. The argument should be the name of the directory.")
+				break
+			}
+			_, newDirNodeId, err := util.CreateDirectory(fs, superBlock, inodeBitmap, dataBitmap, currentDirInode.NodeId)
+			if err != nil {
+				fmt.Println("could not create directory: " + err.Error())
+				break
+			}
+			err = util.AddDirItem(currentDirInode.NodeId, int32(newDirNodeId), arr[1], fs, superBlock)
+
+		case "cd":
+			//changes the current directory
+			if len(arr) != 2 {
+				fmt.Println("Wrong amount of arguments. The argument should be the name of the directory.")
+				break
+			}
+			for _, v := range currentDir {
+				if string(v.ItemName[:]) == arr[1] {
+					if arr[1] == ".." {
+						currentPath = currentPath[:strings.LastIndex(currentPath, "/")]
+					} else if arr[1] == "." {
+						break
+					} else {
+						if currentPath == "/" {
+							currentPath += arr[1]
+						} else {
+							currentPath += "/" + arr[1]
+						}
+					}
+					currentDirInodeId = v.Inode
+				}
+			}
+		}
+	}
+
+	/* superBlock, dataBitmap, inodeBitmap, _ := util.Format(int(size), "fat32")
 
 	//test
 	fp, err := os.OpenFile("fat32", os.O_RDWR, 0666)
@@ -97,7 +270,7 @@ func main() {
 	buf := new(bytes.Buffer)
 	buf.Write(rootdir)
 	binary.Read(buf, binary.LittleEndian, currentDir)
-	fmt.Println(currentDir)
+	fmt.Println(currentDir) */
 	//bmp := util.CreateBitmap(8)
 	//println(binary.Size(bmp))
 	//fmt.Println(bmp)
