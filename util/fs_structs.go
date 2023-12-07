@@ -36,6 +36,16 @@ type PseudoInode struct {
 	Indirect [3]int32 // indirect links (link - data blocks)
 }
 
+type SinglyIndirectBlock struct {
+	//indirect block is a block containing pointers to data blocks
+	Pointers []int32
+}
+
+type DoublyIndirectPointer struct {
+	//doubly indirect pointer is a pointer to an indirect blocks
+	Pointers []SinglyIndirectBlock
+}
+
 type DirectoryItem struct {
 	//předpokládáme, že adresář se vždy vejde do jednoho clusteru (limituje nám počet položek v adresáři)
 	Inode    int32 // inode corresponding to the file

@@ -105,7 +105,7 @@ func main() {
 			if err != nil {
 				return
 			}
-			_, fileInodeId, err := util.WriteAndSaveData(data, fs, superBlock, []uint8{}, []uint8{}, false)
+			_, fileInodeId, err := util.WriteAndSaveData(data, fs, superBlock, inodeBitmap, dataBitmap, false)
 			if err != nil {
 				fmt.Println("could not write data to the filesystem: " + err.Error())
 				break
@@ -122,25 +122,26 @@ func main() {
 				fmt.Println("Wrong amount of arguments. The argument should be the name of the file in the filesystem.")
 				break
 			}
-			for i, v := range currentDir {
-				if string(v.ItemName[:]) == arr[1] {
-					inode, err := util.LoadInode(fs, v.Inode, int64(superBlock.InodeStartAddress))
-					if err != nil {
-						fmt.Println("could not load inode: " + err.Error())
-						break
-					}
-					data, err := util.ReadFileData(fs, inode, superBlock)
-					if err != nil {
-						fmt.Println("could not read data: " + err.Error())
-						break
-					}
-					fmt.Println(string(data))
-					break
-				}
-				if i == len(currentDir)-1 {
-					fmt.Println("file not found")
-				}
+			dirItemIndex := util.GetDirItemIndex(currentDir, arr[1])
+			if dirItemIndex == -1 {
+				fmt.Println("file not found")
+				break
 			}
+			inode, err := util.LoadInode(fs, currentDir[dirItemIndex].Inode, int64(superBlock.InodeStartAddress))
+			if err != nil {
+				fmt.Println("could not load inode: " + err.Error())
+				break
+			}
+			if inode.IsDirectory {
+				fmt.Println("cannot cat a directory")
+				break
+			}
+			data, err := util.ReadFileData(fs, inode, superBlock)
+			if err != nil {
+				fmt.Println("could not read data: " + err.Error())
+				break
+			}
+			fmt.Println(string(data))
 		case "ls":
 			//prints the content of the directory and inode id
 			if len(arr) != 1 {
@@ -149,12 +150,17 @@ func main() {
 			}
 			fmt.Println("Current directory: " + currentPath)
 			//print table header
-			fmt.Printf("%-20s %-20s\n", "Name", "Inode")
+			fmt.Printf("%-20s %-20s %-20s %-20s\n", "Name", "Inode", "Size", "References")
 			for _, v := range currentDir {
 				if v.Inode == 0 {
 					continue
 				}
-				fmt.Printf("%-20s %-20d\n", string(v.ItemName[:]), v.Inode)
+				dirItemInode, err := util.LoadInode(fs, v.Inode, int64(superBlock.InodeStartAddress))
+				if err != nil {
+					fmt.Println("could not load inode: " + err.Error())
+					break
+				}
+				fmt.Printf("%-20s %-20d %-20d %-20d\n", v.ItemName, v.Inode, dirItemInode.FileSize, dirItemInode.References)
 			}
 		case "mkdir":
 			//creates a directory
@@ -168,6 +174,10 @@ func main() {
 				break
 			}
 			err = util.AddDirItem(currentDirInode.NodeId, int32(newDirNodeId), arr[1], fs, superBlock)
+			if err != nil {
+				fmt.Println("could not add directory item: " + err.Error())
+				break
+			}
 
 		case "cd":
 			//changes the current directory
@@ -175,23 +185,70 @@ func main() {
 				fmt.Println("Wrong amount of arguments. The argument should be the name of the directory.")
 				break
 			}
-			for _, v := range currentDir {
-				if string(v.ItemName[:]) == arr[1] {
-					if arr[1] == ".." {
-						currentPath = currentPath[:strings.LastIndex(currentPath, "/")]
-					} else if arr[1] == "." {
-						break
-					} else {
-						if currentPath == "/" {
-							currentPath += arr[1]
-						} else {
-							currentPath += "/" + arr[1]
-						}
-					}
-					currentDirInodeId = v.Inode
+			dirItemIndex := util.GetDirItemIndex(currentDir, arr[1])
+			if dirItemIndex == -1 {
+				fmt.Println("directory not found")
+				break
+			}
+			isDir, err := util.IsInodeDirectory(fs, currentDir[dirItemIndex].Inode, int64(superBlock.InodeStartAddress))
+			if err != nil {
+				fmt.Println("could not load inode: " + err.Error())
+				break
+			}
+			if !isDir {
+				fmt.Println("not a directory")
+				break
+			}
+
+			if arr[1] == ".." {
+				currentPath = currentPath[:strings.LastIndex(currentPath, "/")+1]
+			} else if arr[1] == "." {
+				break
+			} else {
+				if currentPath == "/" {
+					currentPath += arr[1]
+				} else {
+					currentPath += "/" + arr[1]
 				}
 			}
+			currentDirInodeId = currentDir[dirItemIndex].Inode
+
+		case "rm":
+			//removes a file or directory
+			if len(arr) != 2 {
+				fmt.Println("Wrong amount of arguments. The argument should be the name of the file or directory.")
+				break
+			}
+			dirItemIndex := util.GetDirItemIndex(currentDir, arr[1])
+			if dirItemIndex == -1 {
+				fmt.Println("file or directory not found")
+				break
+			}
+			inode, err := util.LoadInode(fs, currentDir[dirItemIndex].Inode, int64(superBlock.InodeStartAddress))
+			if err != nil {
+				fmt.Println("could not load inode: " + err.Error())
+				break
+			}
+			if inode.IsDirectory {
+				inodeDir, err := util.LoadDirectory(fs, inode, superBlock)
+				if err != nil {
+					fmt.Println("could not load directory: " + err.Error())
+					break
+				}
+				inodeDirLen := 0
+				for _, v := range inodeDir {
+					if v.Inode != 0 {
+						inodeDirLen++
+					}
+				}
+				if inodeDirLen > 2 {
+					fmt.Println("directory not empty")
+					break
+				}
+			}
+			err = util.RemoveDirItem(currentDirInode.NodeId, arr[1], fs, superBlock)
 		}
+
 	}
 
 	/* superBlock, dataBitmap, inodeBitmap, _ := util.Format(int(size), "fat32")

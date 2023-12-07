@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 )
 
 func CreateBitmap(bytes int) []uint8 {
@@ -434,6 +435,14 @@ func saveInode(destPtr *os.File, inodeStartAddress int64, inode PseudoInode) err
 	return nil
 }
 
+func IsInodeDirectory(destPtr *os.File, inodeId int32, inodeStartAddress int64) (bool, error) {
+	inode, err := LoadInode(destPtr, inodeId, inodeStartAddress)
+	if err != nil {
+		return false, err
+	}
+	return inode.IsDirectory, nil
+}
+
 func CreateDirectory(destPtr *os.File, superBlock Superblock, inodeBitmap []uint8, dataBitmap []uint8, parentNodeId int32) (int, int, error) {
 	//TODO check if directory with same name already exists
 	buf := new(bytes.Buffer)
@@ -456,13 +465,13 @@ func CreateDirectory(destPtr *os.File, superBlock Superblock, inodeBitmap []uint
 }
 
 // todo create a function that will modify inodes and remove data (set inode id = 0 and only need to change databitmap + inode bitmap)
-func checkIfDirItemExists(currentDir []DirectoryItem, dirItemName string) bool {
-	for _, v := range currentDir {
-		if string(v.ItemName[:]) == dirItemName {
-			return true
+func GetDirItemIndex(currentDir []DirectoryItem, dirItemName string) int {
+	for i, v := range currentDir {
+		if removeNullCharsFromString(string(v.ItemName[:])) == dirItemName {
+			return i
 		}
 	}
-	return false
+	return -1
 }
 
 func LoadDirectory(fs *os.File, dirInode PseudoInode, superBlock Superblock) ([]DirectoryItem, error) {
@@ -498,7 +507,11 @@ func AddDirItem(currentDirInodeId int32, dirItemNodeId int32, dirItemName string
 		return err
 	}
 
-	currentDirInode.References++
+	dirItemInode, err := LoadInode(fs, dirItemNodeId, int64(superBlock.InodeStartAddress))
+	if err != nil {
+		return err
+	}
+	dirItemInode.References++
 
 	currentDir, err := LoadDirectory(fs, currentDirInode, superBlock)
 	if err != nil {
@@ -510,7 +523,7 @@ func AddDirItem(currentDirInodeId int32, dirItemNodeId int32, dirItemName string
 		return err
 	}
 
-	if checkIfDirItemExists(currentDir, dirItemName) {
+	if GetDirItemIndex(currentDir, dirItemName) > -1 {
 		return fmt.Errorf("file with same name already exists")
 	}
 
@@ -538,6 +551,11 @@ func AddDirItem(currentDirInodeId int32, dirItemNodeId int32, dirItemName string
 		return err
 	}
 
+	err = saveInode(fs, int64(superBlock.InodeStartAddress), dirItemInode)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -545,13 +563,14 @@ func RemoveDirItem(currentDirInodeId int32, dirItemName string, destPtr *os.File
 	oldDataBuf := new(bytes.Buffer)
 	newDataBuf := new(bytes.Buffer)
 	currentDir := make([]DirectoryItem, superBlock.ClusterSize/int32(binary.Size(DirectoryItem{})))
+	dirItemInode := PseudoInode{}
 
 	currentDirInode, err := LoadInode(destPtr, currentDirInodeId, int64(superBlock.InodeStartAddress))
 	if err != nil {
 		return err
 	}
 
-	currentDirInode.References--
+	//currentDirInode.References--
 
 	usedDataBlocks, _, err := getInodeDataAddresses(destPtr, currentDirInode, superBlock)
 	if err != nil {
@@ -572,19 +591,18 @@ func RemoveDirItem(currentDirInodeId int32, dirItemName string, destPtr *os.File
 		return err
 	}
 
-	if !checkIfDirItemExists(currentDir, dirItemName) {
-		return fmt.Errorf("file does not exist")
-	}
+	dirItemIndex := GetDirItemIndex(currentDir, dirItemName)
 
-	for i, v := range currentDir {
-		if i == 0 || i == 1 {
-			continue
+	if dirItemIndex == -1 {
+		return fmt.Errorf("file does not exist")
+	} else {
+		dirItemInode, err = LoadInode(destPtr, currentDir[dirItemIndex].Inode, int64(superBlock.InodeStartAddress))
+		if err != nil {
+			return err
 		}
-		if string(v.ItemName[:]) == dirItemName {
-			v.Inode = 0
-			currentDir[i] = DirectoryItem{}
-			break
-		}
+		dirItemInode.References--
+		currentDir[dirItemIndex].Inode = 0
+		currentDir[dirItemIndex] = DirectoryItem{}
 	}
 
 	//transform data back into bytes
@@ -604,8 +622,13 @@ func RemoveDirItem(currentDirInodeId int32, dirItemName string, destPtr *os.File
 		return err
 	}
 
-	if currentDirInode.References == 0 {
-		err = deleteFile(destPtr, currentDirInode, superBlock)
+	if dirItemInode.References <= 0 {
+		err = deleteFile(destPtr, dirItemInode, superBlock)
+		if err != nil {
+			return err
+		}
+	} else {
+		err = saveInode(destPtr, int64(superBlock.InodeStartAddress), dirItemInode)
 		if err != nil {
 			return err
 		}
@@ -614,13 +637,17 @@ func RemoveDirItem(currentDirInodeId int32, dirItemName string, destPtr *os.File
 	return nil
 }
 
+func removeNullCharsFromString(s string) string {
+	return strings.Replace(s, "\x00", "", -1)
+}
+
 func deleteFile(fs *os.File, inode PseudoInode, superBlock Superblock) error {
 	inodeBitmap, err := LoadBitmap(fs, superBlock.BitmapiStartAddress, superBlock.BitmapiSize)
 	dataBitmap, err := LoadBitmap(fs, superBlock.BitmapStartAddress, superBlock.BitmapSize)
 	dataAddresses, indirectPtrAddresess, err := getInodeDataAddresses(fs, inode, superBlock)
 
 	//inodeBitmap[(inode.NodeId-1)/8] = setBit(inodeBitmap[(inode.NodeId-1)/8], uint8((inode.NodeId-1)%8), true)
-	inodeBitmap = SetValueInInodeBitmap(inodeBitmap, inode)
+	inodeBitmap = SetValueInInodeBitmap(inodeBitmap, inode, false)
 	dataBitmap = SetValuesInDataBitmap(dataBitmap, dataAddresses, superBlock.DataStartAddress, superBlock.ClusterSize, false)
 	dataBitmap = SetValuesInDataBitmap(dataBitmap, indirectPtrAddresess, superBlock.DataStartAddress, superBlock.ClusterSize, false)
 
@@ -640,9 +667,9 @@ func deleteFile(fs *os.File, inode PseudoInode, superBlock Superblock) error {
 	return nil
 }
 
-func SetValueInInodeBitmap(inodeBitmap []uint8, inode PseudoInode) []uint8 {
+func SetValueInInodeBitmap(inodeBitmap []uint8, inode PseudoInode, value bool) []uint8 {
 	bitmap := append([]uint8(nil), inodeBitmap...)
-	bitmap[(inode.NodeId-1)/8] = setBit(bitmap[(inode.NodeId-1)/8], uint8((inode.NodeId-1)%8), true)
+	bitmap[(inode.NodeId-1)/8] = setBit(bitmap[(inode.NodeId-1)/8], uint8((inode.NodeId-1)%8), false)
 	return bitmap
 }
 
