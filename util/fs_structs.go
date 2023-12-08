@@ -38,11 +38,13 @@ type PseudoInode struct {
 
 type SinglyIndirectBlock struct {
 	//indirect block is a block containing pointers to data blocks
+	Address  int32
 	Pointers []int32
 }
 
-type DoublyIndirectPointer struct {
+type DoublyIndirectBlock struct {
 	//doubly indirect pointer is a pointer to an indirect blocks
+	Address  int32
 	Pointers []SinglyIndirectBlock
 }
 

@@ -110,6 +110,71 @@ func CreateInode(inodeBitmap []uint8, superBlock Superblock, isDirectory bool, f
 	return inode, inodeBitmapNew, nil
 }
 
+func assignDataToInode(superBlock Superblock, inode *PseudoInode, availableDataBlocks []int32, dataBitmap []uint8) (SinglyIndirectBlock, DoublyIndirectBlock, []uint8, error) {
+	addrInOneBlock := superBlock.ClusterSize / AddressByteLen
+	directAddrLen := len(inode.Direct)
+	IndirectOne := SinglyIndirectBlock{}
+	IndirectTwo := DoublyIndirectBlock{}
+
+	doublyIndirectBlockNeeded := 0
+	//one singly will belong in indirect 1 and other singlys will belong in indirect 2
+	singlyIndirectBlockNeeded := int(math.Ceil(float64(len(availableDataBlocks)-directAddrLen) / float64(addrInOneBlock)))
+	if singlyIndirectBlockNeeded > 1 {
+		doublyIndirectBlockNeeded++
+	}
+
+	//addrInLastBlock := singlyIndirectBlockNeeded*int(addrInOneBlock) - (len(availableDataBlocks) - directAddrLen)
+	//lastBlockDataLen := (int(inode.FileSize) - int(dataMaxBlocks-1)*int(blockSize))
+	pointingToDataBlocks := singlyIndirectBlockNeeded * int(addrInOneBlock)
+	extraBlocksNeeded := doublyIndirectBlockNeeded + pointingToDataBlocks
+	extraBlocksSize := extraBlocksNeeded * int(superBlock.ClusterSize)
+
+	//number of addresses pointing to data blocks vs amount of data blocks for data
+	if int(addrInOneBlock*addrInOneBlock+addrInOneBlock)+directAddrLen < len(availableDataBlocks) {
+		return SinglyIndirectBlock{}, DoublyIndirectBlock{}, nil, fmt.Errorf("file is too big (not enough references available)")
+	}
+
+	extraDataBlocks, dataBitmapNew, err := GetAvailableDataBlocks(dataBitmap, superBlock.DataStartAddress, int32(extraBlocksSize), superBlock.ClusterSize)
+	if err != nil {
+		return SinglyIndirectBlock{}, DoublyIndirectBlock{}, nil, err
+	}
+
+	copy(inode.Direct[:], availableDataBlocks)
+
+	if len(extraDataBlocks) != 0 {
+		remainingDataBlocks := availableDataBlocks[directAddrLen:]
+
+		singlyIndirectBlocks := make([]SinglyIndirectBlock, singlyIndirectBlockNeeded)
+		for i := 0; i < singlyIndirectBlockNeeded; i++ {
+			startIndex := i * int(addrInOneBlock)
+			endIndex := (i + 1) * int(addrInOneBlock)
+			if i == singlyIndirectBlockNeeded-1 {
+				singlyIndirectBlocks[i].Pointers = make([]int32, len(remainingDataBlocks[startIndex:]))
+				copy(singlyIndirectBlocks[i].Pointers, remainingDataBlocks[startIndex:])
+			} else {
+				singlyIndirectBlocks[i].Pointers = make([]int32, len(remainingDataBlocks[startIndex:]))
+				copy(singlyIndirectBlocks[i].Pointers, remainingDataBlocks[startIndex:endIndex])
+			}
+			singlyIndirectBlocks[i].Address = extraDataBlocks[i]
+		}
+
+		doublyIndirectBlock := DoublyIndirectBlock{}
+		if doublyIndirectBlockNeeded > 0 {
+			doublyIndirectBlock.Pointers = make([]SinglyIndirectBlock, singlyIndirectBlockNeeded-1)
+			copy(doublyIndirectBlock.Pointers, singlyIndirectBlocks[1:])
+			doublyIndirectBlock.Address = extraDataBlocks[len(extraDataBlocks)-1]
+		}
+
+		IndirectOne = singlyIndirectBlocks[0]
+		inode.Indirect[0] = IndirectOne.Address
+
+		IndirectTwo = doublyIndirectBlock
+		inode.Indirect[1] = IndirectTwo.Address
+	}
+
+	return IndirectOne, IndirectTwo, dataBitmapNew, nil
+}
+
 // maps given data blocks to direct and indirect pointers, if indirect pointers are not required, returns empty maps
 // if data requries indirect pointers, returns maps that contain mapping address -> list of addresses (indirect one)
 // and mapping address -> (address -> list of addresses)
@@ -136,7 +201,7 @@ func mapDataInode(superBlock Superblock, inode *PseudoInode, availableDataBlocks
 	copy(inode.Direct[:], availableDataBlocks)
 
 	//empty slice means no indirect blocks needed
-	availableIndirectDataBlocks, dataBitmapNew, err := GetAvailableDataBlocks(dataBitmap, superBlock.DataStartAddress, int32(indirectBlocksSize), superBlock.ClusterSize)
+	extraDataBlocks, dataBitmapNew, err := GetAvailableDataBlocks(dataBitmap, superBlock.DataStartAddress, int32(indirectBlocksSize), superBlock.ClusterSize)
 	//copy(dataBitmap, dataBitmapNew) //modify slice in argument
 	indirectOneBlock := make(map[int32][]int32)
 	indirectTwoBlock := make(map[int32]map[int32][]int32)
@@ -144,16 +209,16 @@ func mapDataInode(superBlock Superblock, inode *PseudoInode, availableDataBlocks
 		return nil, nil, nil, err
 	}
 
-	if len(availableIndirectDataBlocks) != 0 {
-		indirectOneBlock[availableIndirectDataBlocks[0]] = make([]int32, addrInOneBlock)
+	if len(extraDataBlocks) != 0 {
+		indirectOneBlock[extraDataBlocks[0]] = make([]int32, addrInOneBlock)
 		end := int(math.Min(float64(directAddrLen+int(addrInOneBlock)), float64(len(availableDataBlocks))))
-		copy(indirectOneBlock[availableIndirectDataBlocks[0]], availableDataBlocks[directAddrLen:end])
-		inode.Indirect[0] = availableIndirectDataBlocks[0]
+		copy(indirectOneBlock[extraDataBlocks[0]], availableDataBlocks[directAddrLen:end])
+		inode.Indirect[0] = extraDataBlocks[0]
 
-		if len(availableIndirectDataBlocks) > 1 {
+		if len(extraDataBlocks) > 1 {
 			if start := end; start <= len(availableDataBlocks) {
 				indirectBlocksNeededTwo := int(math.Ceil(float64(len(availableDataBlocks[start:])) / float64(addrInOneBlock)))
-				indirectTwoBlock[availableIndirectDataBlocks[1]] = make(map[int32][]int32)
+				indirectTwoBlock[extraDataBlocks[1]] = make(map[int32][]int32)
 				for i := 0; i < indirectBlocksNeededTwo; i++ {
 					//i+1 because 0 is reserved for indirect level one
 					if i == indirectBlocksNeededTwo-1 {
@@ -162,12 +227,12 @@ func mapDataInode(superBlock Superblock, inode *PseudoInode, availableDataBlocks
 						end = start + int(addrInOneBlock)
 					}
 					index := i + 1
-					indirectTwoBlock[availableIndirectDataBlocks[1]][availableIndirectDataBlocks[index+1]] = make([]int32, addrInOneBlock)
-					copy(indirectTwoBlock[availableIndirectDataBlocks[1]][availableIndirectDataBlocks[index+1]], availableDataBlocks[start:end])
+					indirectTwoBlock[extraDataBlocks[1]][extraDataBlocks[index+1]] = make([]int32, addrInOneBlock)
+					copy(indirectTwoBlock[extraDataBlocks[1]][extraDataBlocks[index+1]], availableDataBlocks[start:end])
 					start = end
 				}
 			}
-			inode.Indirect[1] = availableIndirectDataBlocks[1]
+			inode.Indirect[1] = extraDataBlocks[1]
 		}
 	}
 	return indirectOneBlock, indirectTwoBlock, dataBitmapNew, nil
@@ -197,6 +262,38 @@ func saveDataBlocks(src []byte, destPtr *os.File, superBlock Superblock, availab
 	}
 
 	return bytesWritten, nil
+}
+
+// save data from indirect one and two
+func saveIndirectData2(fs *os.File, inode PseudoInode, singlyIndirectBlock SinglyIndirectBlock, doublyIndirectBlock DoublyIndirectBlock) error {
+	//write indirect one
+	if singlyIndirectBlock.Address != 0 {
+		fs.Seek(int64(singlyIndirectBlock.Address), 0)
+		err := binary.Write(fs, binary.LittleEndian, singlyIndirectBlock.Pointers)
+		if err != nil {
+			return fmt.Errorf("could not write into datablock: %v", err)
+		}
+	}
+
+	//write indirect two
+	if doublyIndirectBlock.Address != 0 {
+		doublyIndirectBlockPointers := make([]int32, len(doublyIndirectBlock.Pointers))
+		for _, singlyIndirectBlock := range doublyIndirectBlock.Pointers {
+			doublyIndirectBlockPointers = append(doublyIndirectBlockPointers, singlyIndirectBlock.Address)
+			fs.Seek(int64(singlyIndirectBlock.Address), 0)
+			err := binary.Write(fs, binary.LittleEndian, singlyIndirectBlock.Pointers)
+			if err != nil {
+				return fmt.Errorf("could not write into datablock: %v", err)
+			}
+		}
+		fs.Seek(int64(doublyIndirectBlock.Address), 0)
+		err := binary.Write(fs, binary.LittleEndian, doublyIndirectBlockPointers)
+		if err != nil {
+			return fmt.Errorf("could not write into datablock: %v", err)
+		}
+	}
+
+	return nil
 }
 
 // save data from indirect one and two
@@ -251,13 +348,23 @@ func WriteAndSaveData(src []byte, destPtr *os.File, superBlock Superblock, inode
 		return 0, 0, err
 	}
 
-	//dataBitmap gets modified
-	indirectBlockOne, indirectBlockTwo, dataBitmap, err := mapDataInode(superBlock, &inode, availableDataBlocks, dataBitmap)
+	/* 	//dataBitmap gets modified
+	   	indirectBlockOne, indirectBlockTwo, dataBitmap, err := mapDataInode(superBlock, &inode, availableDataBlocks, dataBitmap)
+	   	if err != nil {
+	   		return 0, 0, err
+	   	}
+
+	   	err = saveIndirectData(destPtr, inode, indirectBlockOne, indirectBlockTwo)
+	   	if err != nil {
+	   		return 0, 0, err
+	   	} */
+
+	singlyIndirectBlock, doublyIndirectBlock, dataBitmap, err := assignDataToInode(superBlock, &inode, availableDataBlocks, dataBitmap)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	err = saveIndirectData(destPtr, inode, indirectBlockOne, indirectBlockTwo)
+	err = saveIndirectData2(destPtr, inode, singlyIndirectBlock, doublyIndirectBlock)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -326,7 +433,7 @@ func getInodeDataAddresses(destPtr *os.File, inode PseudoInode, superblock Super
 		if err != nil {
 			return nil, nil, err
 		}
-		SortInt32(indirectTwoBlockDataFirst) //sort because map was used and it doesnt guarantee sortion
+		//SortInt32(indirectTwoBlockDataFirst) //sort because map was used and it doesnt guarantee sortion
 
 		for _, addr := range indirectTwoBlockDataFirst {
 			if addr == 0 {
@@ -337,7 +444,7 @@ func getInodeDataAddresses(destPtr *os.File, inode PseudoInode, superblock Super
 			if err != nil {
 				return nil, nil, err
 			}
-			SortInt32(indirectTwoBlockDataSecond) //sort because map was used and it doesnt guarantee sortion
+			//SortInt32(indirectTwoBlockDataSecond) //sort because map was used and it doesnt guarantee sortion
 			for _, addr2 := range indirectTwoBlockDataSecond {
 				if addr2 == 0 {
 					continue
@@ -524,6 +631,10 @@ func AddDirItem(currentDirInodeId int32, dirItemNodeId int32, dirItemName string
 	}
 
 	if GetDirItemIndex(currentDir, dirItemName) > -1 {
+		dirItemInode.References--
+		if dirItemInode.References <= 0 {
+			DeleteFile(fs, dirItemInode, superBlock)
+		}
 		return fmt.Errorf("file with same name already exists")
 	}
 
@@ -623,7 +734,7 @@ func RemoveDirItem(currentDirInodeId int32, dirItemName string, destPtr *os.File
 	}
 
 	if dirItemInode.References <= 0 {
-		err = deleteFile(destPtr, dirItemInode, superBlock)
+		err = DeleteFile(destPtr, dirItemInode, superBlock)
 		if err != nil {
 			return err
 		}
@@ -641,7 +752,7 @@ func removeNullCharsFromString(s string) string {
 	return strings.Replace(s, "\x00", "", -1)
 }
 
-func deleteFile(fs *os.File, inode PseudoInode, superBlock Superblock) error {
+func DeleteFile(fs *os.File, inode PseudoInode, superBlock Superblock) error {
 	inodeBitmap, err := LoadBitmap(fs, superBlock.BitmapiStartAddress, superBlock.BitmapiSize)
 	dataBitmap, err := LoadBitmap(fs, superBlock.BitmapStartAddress, superBlock.BitmapSize)
 	dataAddresses, indirectPtrAddresess, err := getInodeDataAddresses(fs, inode, superBlock)
