@@ -1,14 +1,21 @@
 package util
 
 import (
-	"fmt"
-	"strings"
+	"os"
 )
 
-func execFormat(command string) ([]string, error) {
-	args := strings.Fields(command)
-	if len(args) == 0 {
-		return nil, fmt.Errorf("could not parse arguments")
+func execFormat(sizeStr string, fsname string) (*os.File, error) {
+	size, err := ParseFormatString(sizeStr)
+	if err != nil {
+		return nil, err
 	}
-	return args, nil
+	_, _, _, err = Format(int(size), fsname)
+	if err != nil {
+		return nil, err
+	}
+	fs, _ := os.OpenFile(fsname, os.O_RDWR, 0666)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
 }
