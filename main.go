@@ -41,7 +41,7 @@ func main() {
 	}
 
 	for {
-		arr, err := util.LoadCommand()
+		arr, err := util.LoadCommand(os.Stdin)
 		if err != nil {
 			log.Fatal(err)
 			return
