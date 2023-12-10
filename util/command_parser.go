@@ -18,7 +18,7 @@ func parseCommand(command string) ([]string, error) {
 }
 
 func LoadCommand(input *os.File) ([]string, error) {
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReader(input)
 	command, err := reader.ReadString('\n')
 	if err != nil {
 		return nil, err

@@ -20,18 +20,19 @@ type Interpreter struct {
 
 func NewInterpreter(fs *os.File) *Interpreter {
 	return &Interpreter{
-		fs: fs,
+		fs:          fs,
+		currentPath: "/",
 	}
 }
 
-func (i *Interpreter) Close() {
-	i.fs.Close()
-}
-
-func (i *Interpreter) Init() {
+func (i *Interpreter) LoadInterpreter() {
 	var err error
 	i.superBlock = LoadSuperBlock(i.fs)
-	i.currentDirInode, err = LoadInode(i.fs, i.currentDirInode.NodeId, int64(i.superBlock.InodeStartAddress))
+	currentDirInodeId := i.currentDirInode.NodeId
+	if currentDirInodeId == 0 {
+		currentDirInodeId = 1
+	}
+	i.currentDirInode, err = LoadInode(i.fs, currentDirInodeId, int64(i.superBlock.InodeStartAddress))
 	if err != nil {
 		log.Fatal(err)
 		return
@@ -53,78 +54,114 @@ func (i *Interpreter) Init() {
 	}
 }
 
-func (i *Interpreter) ExecCommand(arr []string) {
+func ExecFormat(sizeStr string, fsname string) (*os.File, error) {
+	size, err := ParseFormatString(sizeStr)
+	if err != nil {
+		return nil, err
+	}
+	_, _, _, err = Format(int(size), fsname)
+	if err != nil {
+		return nil, err
+	}
+	fs, err := os.OpenFile(fsname, os.O_RDWR, 0666)
+	if err != nil {
+		return nil, err
+	}
+	return fs, nil
+}
+
+func (i *Interpreter) ExecCommand(arr []string) error {
 	if i.fs == nil {
-		fmt.Println("no filesystem loaded")
-		return
+		return fmt.Errorf("no filesystem loaded")
 	}
 	switch command := strings.ToLower(arr[0]); command {
+	case "format":
+		var err error
+		i.fs, err = ExecFormat(arr[1], i.fs.Name())
+		//fmt.Println(i.fs.Name())
+		if err != nil {
+			return err
+		}
+
 	case "incp":
 		err := i.Incp(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "cat":
 		err := i.Cat(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "ls":
 		err := i.Ls(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "mkdir":
 		err := i.Mkdir(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "cd":
 		err := i.Cd(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "rmdir":
 		err := i.Rmdir(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "rm":
 		err := i.Rm(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "pwd":
 		err := i.Pwd()
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "info":
 		err := i.Info(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "cp":
 		err := i.CP(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "mv":
 		err := i.Mv(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "outcp":
 		err := i.Outcp(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
 	case "load":
 		err := i.Load(arr)
 		if err != nil {
-			fmt.Println(err.Error())
+			return err
 		}
+	case "xcp":
+		err := i.Xcp(arr)
+		if err != nil {
+			return err
+		}
+	case "short":
+		err := i.Short(arr)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown command")
 	}
+	return nil
 }
 
 func (i *Interpreter) Incp(arr []string) error {
@@ -177,22 +214,6 @@ func (i *Interpreter) Cat(arr []string) error {
 	return nil
 }
 
-func (i *Interpreter) execFormat(sizeStr string, fsname string) (*os.File, error) {
-	size, err := ParseFormatString(sizeStr)
-	if err != nil {
-		return nil, err
-	}
-	_, _, _, err = Format(int(size), fsname)
-	if err != nil {
-		return nil, err
-	}
-	i.fs, err = os.OpenFile(fsname, os.O_RDWR, 0666)
-	if err != nil {
-		return nil, err
-	}
-	return i.fs, nil
-}
-
 func (i *Interpreter) Ls(arr []string) error {
 	if len(arr) > 2 {
 		return fmt.Errorf("Wrong amount of arguments.")
@@ -203,6 +224,9 @@ func (i *Interpreter) Ls(arr []string) error {
 		destInode, _, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 		if err != nil {
 			return fmt.Errorf("could not find destination: " + err.Error())
+		}
+		if !destInode.IsDirectory {
+			return fmt.Errorf("not a directory")
 		}
 		destDir, err = LoadDirectory(i.fs, destInode, i.superBlock)
 		if err != nil {
@@ -399,23 +423,66 @@ func (i *Interpreter) Mv(arr []string) error {
 	if len(arr) != 3 {
 		return fmt.Errorf("Wrong amount of arguments. The arguments should be the name of the source and destination.")
 	}
-	srcInode, _, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
+	var filename string
+	srcInode, srcParentNode, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 	if err != nil {
 		return fmt.Errorf("could not find source: " + err.Error())
 	}
-	destInode, _, err := PathToInode(i.fs, arr[2], i.superBlock, i.currentDirInode)
+	/* destInode, _, err := PathToInode(i.fs, arr[2], i.superBlock, i.currentDirInode)
 	if err != nil {
+		destInode, _, err = PathToInode(i.fs, filepath.Dir(arr[2]), i.superBlock, i.currentDirInode)
+		if err != nil && destInode.IsDirectory {
+			return fmt.Errorf("could not find destination: " + err.Error())
+		}
+		//dest file does not exist so rename it
+		filename = filepath.Base(arr[2])
+	} */
+
+	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[2]), i.superBlock, i.currentDirInode)
+	if err != nil && destInode.IsDirectory {
 		return fmt.Errorf("could not find destination: " + err.Error())
 	}
-
-	err = RemoveDirItem(i.currentDirInode.NodeId, filepath.Base(arr[1]), i.fs, i.superBlock, false)
+	destInodeDir, err := LoadDirectory(i.fs, destInode, i.superBlock)
 	if err != nil {
-		return fmt.Errorf("could not remove directory item: " + err.Error())
+		return fmt.Errorf("could not load directory: " + err.Error())
+	}
+	var finalDestInodeId int32
+	if itemIndex := GetDirItemIndex(destInodeDir, filepath.Base(arr[2])); itemIndex != -1 {
+		//dest exists might be a directory or file
+		filename = filepath.Base(arr[1])
+		oldDestInodeId := destInode.NodeId
+		destInode, _, err = PathToInode(i.fs, arr[2], i.superBlock, i.currentDirInode)
+		finalDestInodeId = destInode.NodeId
+		if err != nil {
+			return fmt.Errorf("could not load inode: " + err.Error())
+		}
+		if !destInode.IsDirectory {
+			fmt.Printf("%s is a file, overwriting\n", destInodeDir[itemIndex].ItemName)
+			err = RemoveDirItem(oldDestInodeId, string(removeNullCharsFromString(string(destInodeDir[itemIndex].ItemName[:]))), i.fs, i.superBlock, true)
+			finalDestInodeId = oldDestInodeId //dest is a file so we want to overwrite it, add dir item takes parent node id where file resides
+			if err != nil {
+				return fmt.Errorf("could not remove directory item: " + err.Error())
+			}
+		}
+	} else {
+		//dest doesnt exist
+		finalDestInodeId = destInode.NodeId
+		filename = filepath.Base(arr[2])
 	}
 
-	err = AddDirItem(destInode.NodeId, srcInode.NodeId, filepath.Base(arr[2]), i.fs, i.superBlock)
+	//remove src
+	err = RemoveDirItem(srcParentNode.NodeId, filepath.Base(arr[1]), i.fs, i.superBlock, false)
 	if err != nil {
-		return fmt.Errorf("could not add directory item: " + err.Error())
+		fmt.Println("could not remove directory item: " + err.Error())
+	}
+	//add src to dest or rename
+	err = AddDirItem(finalDestInodeId, srcInode.NodeId, filename, i.fs, i.superBlock)
+	if err != nil {
+		fmt.Println("could not add directory item: " + err.Error())
+		err = AddDirItem(srcParentNode.NodeId, srcInode.NodeId, filepath.Base(arr[1]), i.fs, i.superBlock)
+		if err != nil {
+			return fmt.Errorf("could not add directory item: " + err.Error())
+		}
 	}
 
 	return nil
@@ -446,19 +513,28 @@ func (i *Interpreter) Load(arr []string) error {
 	if len(arr) != 2 {
 		return fmt.Errorf("Wrong amount of arguments. The argument should be the name of the filesystem.")
 	}
-	fileWithCommands, err := os.OpenFile(arr[1], os.O_RDWR, 0666)
-	defer fileWithCommands.Close()
+	content, err := os.ReadFile(arr[1])
 	if err != nil {
-		return fmt.Errorf("could not open filesystem: " + err.Error())
+		return fmt.Errorf("could not read file: %v", err)
 	}
 
-	for {
-		arg, err := LoadCommand(fileWithCommands)
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		i.LoadInterpreter()
+		arg, err := parseCommand(line)
 		if err != nil {
-			return fmt.Errorf(err.Error())
+			return fmt.Errorf("error parsing command: %v", err)
 		}
-		i.ExecCommand(arg)
+		if arg[0] == "format" {
+			i.currentPath = "/"
+			i.currentDirInode = PseudoInode{}
+		}
+		err = i.ExecCommand(arg)
+		if err != nil {
+			return fmt.Errorf("error executing command: %v", err)
+		}
 	}
+	return nil
 }
 
 func (i *Interpreter) Xcp(arr []string) error {
@@ -494,6 +570,11 @@ func (i *Interpreter) Xcp(arr []string) error {
 	if err != nil {
 		return fmt.Errorf("could not write data to the filesystem: " + err.Error())
 	}
+	//remove old files
+	err = RemoveDirItem(destInode.NodeId, filepath.Base(arr[3]), i.fs, i.superBlock, true)
+	if err == nil {
+		fmt.Println("overwriting file with same name...")
+	}
 	//add new file to directory
 	err = AddDirItem(destInode.NodeId, int32(newFileInodeId), filepath.Base(arr[3]), i.fs, i.superBlock)
 	if err != nil {
@@ -507,7 +588,7 @@ func (i *Interpreter) Short(arr []string) error {
 	if len(arr) != 2 {
 		return fmt.Errorf("Wrong amount of arguments. The argument should be the name of the file.")
 	}
-	destInode, _, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
+	destInode, parentInode, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 	if err != nil {
 		return fmt.Errorf("could not find destination: " + err.Error())
 	}
@@ -529,7 +610,7 @@ func (i *Interpreter) Short(arr []string) error {
 	if err != nil {
 		return fmt.Errorf("could not remove directory item: " + err.Error())
 	}
-	err = AddDirItem(destInode.NodeId, int32(newFileInodeId), filepath.Base(arr[1]), i.fs, i.superBlock)
+	err = AddDirItem(parentInode.NodeId, int32(newFileInodeId), filepath.Base(arr[1]), i.fs, i.superBlock)
 	if err != nil {
 		return fmt.Errorf("could not add directory item: " + err.Error())
 	}

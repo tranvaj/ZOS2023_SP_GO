@@ -1,0 +1,12 @@
+format 1GB
+ls
+mkdir a
+ls
+mkdir b
+cd b
+pwd
+incp hehe.txt xdd
+incp notes.txt oho
+xcp xdd oho ohio
+cat oho
+ls xddd
