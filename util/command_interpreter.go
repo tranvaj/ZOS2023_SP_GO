@@ -61,6 +61,12 @@ func (i *Interpreter) LoadInterpreter() {
 	}
 }
 
+// getPathDir returns the directory component of the given path.
+// It cleans the path and then extracts the directory using the filepath.Dir function.
+func getPathDir(path string) string {
+	return filepath.Dir(filepath.Clean(path))
+}
+
 func ExecFormat(sizeStr string, fsname string) (*os.File, error) {
 	size, err := ParseFormatString(sizeStr)
 	if err != nil {
@@ -218,7 +224,7 @@ func (i *Interpreter) Incp(arr []string) error {
 		return fmt.Errorf("could not write data to the filesystem: " + err.Error())
 	}
 
-	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[2]), i.superBlock, i.currentDirInode)
+	destInode, _, err := PathToInode(i.fs, getPathDir(arr[2]), i.superBlock, i.currentDirInode)
 	if err != nil {
 		//return fmt.Errorf("could not find destination: " + err.Error())
 		return fmt.Errorf("PATH NOT FOUND (neexistuje cílová cesta)")
@@ -301,7 +307,7 @@ func (i *Interpreter) Mkdir(arr []string) error {
 		return fmt.Errorf("Wrong amount of arguments. The argument should be the name of the directory.")
 	}
 
-	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[1]), i.superBlock, i.currentDirInode)
+	destInode, _, err := PathToInode(i.fs, getPathDir(arr[1]), i.superBlock, i.currentDirInode)
 	if err != nil {
 		//return fmt.Errorf("could not find destination: " + err.Error())
 		return fmt.Errorf("PATH NOT FOUND (neexistuje zadaná cesta)")
@@ -460,7 +466,7 @@ func (i *Interpreter) Cp(arr []string) error {
 		//return fmt.Errorf("could not find source: " + err.Error())
 		return fmt.Errorf("FILE NOT FOUND (není zdroj)")
 	}
-	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[2]), i.superBlock, i.currentDirInode)
+	destInode, _, err := PathToInode(i.fs, getPathDir(arr[2]), i.superBlock, i.currentDirInode)
 	if err != nil {
 		//return fmt.Errorf("could not find destination: " + err.Error())
 		return fmt.Errorf("PATH NOT FOUND (neexistuje cílová cesta)")
@@ -506,7 +512,7 @@ func (i *Interpreter) Mv(arr []string) error {
 		filename = filepath.Base(arr[2])
 	} */
 
-	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[2]), i.superBlock, i.currentDirInode)
+	destInode, _, err := PathToInode(i.fs, getPathDir(arr[2]), i.superBlock, i.currentDirInode)
 	if err != nil && destInode.IsDirectory {
 		//return fmt.Errorf("could not find destination: " + err.Error())
 		return fmt.Errorf("PATH NOT FOUND (neexistuje cílová cesta)")
@@ -634,7 +640,7 @@ func (i *Interpreter) Xcp(arr []string) error {
 	//combine data
 	data := append(data1, data2...)
 	//get location of new file
-	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[3]), i.superBlock, i.currentDirInode)
+	destInode, _, err := PathToInode(i.fs, getPathDir(arr[3]), i.superBlock, i.currentDirInode)
 	if err != nil {
 		return fmt.Errorf("could not find destination: " + err.Error())
 	}
