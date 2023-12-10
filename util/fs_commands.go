@@ -18,7 +18,7 @@ func CreateBitmap(bytes int) []uint8 {
 func createSuperBlock(filename string, diskSize int, clusterSize int) Superblock {
 	var superBlock Superblock
 	pseudoInode := PseudoInode{}
-	copy(superBlock.Signature[:], "user")
+	copy(superBlock.Signature[:], "nuva")
 	copy(superBlock.VolumeDescriptor[:], "description")
 	superBlock.DiskSize = int64(diskSize)
 	superBlock.ClusterSize = int32(clusterSize)
