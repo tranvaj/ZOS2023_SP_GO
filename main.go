@@ -27,8 +27,10 @@ func main() {
 		}
 		fs, err = util.ExecFormat(arr[1], FSNAME)
 		if err != nil {
-			log.Fatal(err)
+			fmt.Println(err)
 			return
+		} else {
+			fmt.Println("OK")
 		}
 	} else {
 		fs, _ = os.OpenFile(FSNAME, os.O_RDWR, 0666)
