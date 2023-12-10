@@ -9,6 +9,9 @@ import (
 	"unicode"
 )
 
+// parseCommand parses the given command string and returns a slice of arguments.
+// It splits the command string into individual arguments using white space as the delimiter.
+// If the command string is empty or contains only white space, it returns an error.
 func parseCommand(command string) ([]string, error) {
 	args := strings.Fields(command)
 	if len(args) == 0 {
@@ -17,6 +20,9 @@ func parseCommand(command string) ([]string, error) {
 	return args, nil
 }
 
+// LoadCommand reads a command from the given input file and returns a slice of strings representing the parsed command.
+// It takes an *os.File as input and returns the parsed command as a []string.
+// If an error occurs while reading the command, it returns nil and the error.
 func LoadCommand(input *os.File) ([]string, error) {
 	reader := bufio.NewReader(input)
 	command, err := reader.ReadString('\n')
@@ -27,6 +33,9 @@ func LoadCommand(input *os.File) ([]string, error) {
 	return parseCommand(command)
 }
 
+// ParseFormatString parses a string in format for example: "2B" or "2KB" or "2GB" and returns the corresponding target size in bytes.
+// The inputString parameter is the formatted string to be parsed.
+// The function returns the target size in bytes and an error if any occurred during parsing.
 func ParseFormatString(inputString string) (uint64, error) {
 	inputString = strings.ToUpper((inputString))
 	sizeSuffixes := "KMGT"

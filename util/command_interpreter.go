@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// metody s (i *Interpreter) jsou metody, ktere jsou pristupne jen z Interpreteru (neco jako metoda tridy v jave)
+// tohle je v podstate neco jako OOP ale v Go
+
 type Interpreter struct {
 	fs              *os.File
 	superBlock      Superblock
@@ -70,6 +73,12 @@ func ExecFormat(sizeStr string, fsname string) (*os.File, error) {
 	return fs, nil
 }
 
+// ExecCommand executes the specified command based on the input array. The arr parameter is an array of strings representing the command and its arguments.
+//
+// It returns an error if the command is unknown or if there is no filesystem loaded.
+//
+// The supported commands are: format, incp, cat, ls, mkdir, cd, rmdir, rm, pwd, info, cp, mv, outcp, load, xcp, and short.
+// Example usage: interpreter.ExecCommand([]string{"ls"})
 func (i *Interpreter) ExecCommand(arr []string) error {
 	if i.fs == nil {
 		return fmt.Errorf("no filesystem loaded")
@@ -129,7 +138,7 @@ func (i *Interpreter) ExecCommand(arr []string) error {
 			return err
 		}
 	case "cp":
-		err := i.CP(arr)
+		err := i.Cp(arr)
 		if err != nil {
 			return err
 		}
@@ -171,7 +180,8 @@ func (i *Interpreter) Incp(arr []string) error {
 
 	data, err := os.ReadFile(arr[1])
 	if err != nil {
-		return fmt.Errorf(err.Error())
+		//return fmt.Errorf(err.Error())
+		return fmt.Errorf("FILE NOT FOUND (není zdroj)")
 	}
 
 	_, fileInodeId, err := WriteAndSaveData(data, i.fs, i.superBlock, i.inodeBitmap, i.dataBitmap, false)
@@ -181,7 +191,8 @@ func (i *Interpreter) Incp(arr []string) error {
 
 	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[2]), i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find destination: " + err.Error())
+		//return fmt.Errorf("could not find destination: " + err.Error())
+		return fmt.Errorf("PATH NOT FOUND (neexistuje cílová cesta)")
 	}
 
 	err = AddDirItem(destInode.NodeId, int32(fileInodeId), filepath.Base(arr[2]), i.fs, i.superBlock)
@@ -198,7 +209,8 @@ func (i *Interpreter) Cat(arr []string) error {
 
 	destInode, _, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find destination: " + err.Error())
+		//return fmt.Errorf("could not find destination: " + err.Error())
+		return fmt.Errorf("FILE NOT FOUND (není zdroj)")
 	}
 
 	if destInode.IsDirectory {
@@ -386,7 +398,7 @@ func (i *Interpreter) Info(arr []string) error {
 	return nil
 }
 
-func (i *Interpreter) CP(arr []string) error {
+func (i *Interpreter) Cp(arr []string) error {
 	if len(arr) != 3 {
 		return fmt.Errorf("Wrong amount of arguments. The arguments should be the name of the source and destination.")
 	}
@@ -394,7 +406,7 @@ func (i *Interpreter) CP(arr []string) error {
 	if err != nil {
 		return fmt.Errorf("could not find source: " + err.Error())
 	}
-	destInode, _, err := PathToInode(i.fs, arr[2], i.superBlock, i.currentDirInode)
+	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[2]), i.superBlock, i.currentDirInode)
 	if err != nil {
 		return fmt.Errorf("could not find destination: " + err.Error())
 	}

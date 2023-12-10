@@ -13,7 +13,7 @@ type Superblock struct {
 	//byte represents char in GO
 	Signature           [9]byte   // author's FS login
 	VolumeDescriptor    [251]byte // description of the generated FS
-	DiskSize            int32     // total VFS size
+	DiskSize            int64     // total VFS size
 	ClusterSize         int32     // cluster size
 	ClusterCount        int32     // number of clusters
 	InodeCount          int32     // inode size is the size of struct pseudo_inode
@@ -36,20 +36,21 @@ type PseudoInode struct {
 	Indirect [3]int32 // indirect links (link - data blocks)
 }
 
+// SinglyIndirectBlock is a block containing pointers to data blocks
 type SinglyIndirectBlock struct {
-	//indirect block is a block containing pointers to data blocks
-	Address  int32
-	Pointers []int32
+	Address  int32   //address of the block
+	Pointers []int32 //array of pointers to data blocks
 }
 
+// DoublyIndirectBlock represents a block in the file system that contains an array of singly indirect blocks.
 type DoublyIndirectBlock struct {
-	//doubly indirect pointer is a pointer to an indirect blocks
-	Address  int32
-	Pointers []SinglyIndirectBlock
+	Address  int32                 //address of the block
+	Pointers []SinglyIndirectBlock //array of singly indirect blocks
 }
 
 type DirectoryItem struct {
-	//předpokládáme, že adresář se vždy vejde do jednoho clusteru (limituje nám počet položek v adresáři)
-	Inode    int32 // inode corresponding to the file
+	// Inode is the inode id corresponding to the file.
+	Inode int32
+	// ItemName is the name of the directory item.
 	ItemName [12]byte
 }
