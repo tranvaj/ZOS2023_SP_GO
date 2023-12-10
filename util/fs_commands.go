@@ -307,7 +307,7 @@ func WriteAndSaveData(src []byte, destPtr *os.File, superBlock Superblock, inode
 // The function returns the current inode, the parent inode, and an error (if any).
 func PathToInode(fs *os.File, path string, superBlock Superblock, currentInode PseudoInode) (PseudoInode, PseudoInode, error) {
 	// Split the path into individual directories and file name
-	directories := strings.Split(path, "/")
+	directories := strings.Split(path, string(os.PathSeparator))
 	fileName := directories[len(directories)-1]
 
 	var err error
