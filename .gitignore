@@ -19,3 +19,12 @@ test/SP/util/command_interpreter.go
 test/SP/util/command_parser.go
 test/SP/util/fs_commands.go
 test/SP/util/fs_structs.go
+test/KIV_ZOS_SP.zip
+test/KIV_ZOS_SP/go.mod
+test/KIV_ZOS_SP/go.sum
+test/KIV_ZOS_SP/main.go
+test/KIV_ZOS_SP/util/command_interpreter.go
+test/KIV_ZOS_SP/util/command_parser.go
+test/KIV_ZOS_SP/util/fs_commands.go
+test/KIV_ZOS_SP/util/fs_structs.go
+test

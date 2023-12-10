@@ -24,11 +24,11 @@ type Interpreter struct {
 // NewInterpreter creates a new instance of the Interpreter struct.
 // It takes a pointer to an os.File as a parameter and returns a pointer to the Interpreter.
 // The fs parameter represents the file system that the interpreter will operate on.
-// The currentPath field of the Interpreter is initialized to "/".
+// The currentPath field of the Interpreter is initialized to "/" or "\" depending on the system OS.
 func NewInterpreter(fs *os.File) *Interpreter {
 	return &Interpreter{
 		fs:          fs,
-		currentPath: "/",
+		currentPath: string(os.PathSeparator),
 	}
 }
 
@@ -416,7 +416,7 @@ func (i *Interpreter) Rm(arr []string) error {
 
 func (i *Interpreter) Pwd() error {
 	//prints the current directory path
-	fmt.Println(i.currentPath)
+	fmt.Println(strings.ReplaceAll(i.currentPath, string(os.PathSeparator), "/"))
 	return nil
 }
 
@@ -599,7 +599,7 @@ func (i *Interpreter) Load(arr []string) error {
 			return fmt.Errorf("error parsing command: %v", err)
 		}
 		if arg[0] == "format" {
-			i.currentPath = "/"
+			i.currentPath = string(os.PathSeparator)
 			i.currentDirInode = PseudoInode{}
 		}
 		err = i.ExecCommand(arg)
