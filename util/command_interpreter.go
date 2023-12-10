@@ -347,7 +347,7 @@ func (i *Interpreter) Cd(arr []string) error {
 	}
 
 	//update current directory path string
-	if filepath.IsAbs(arr[1]) || strings.TrimSpace(arr[1]) == string(os.PathSeparator) {
+	if filepath.IsAbs(arr[1]) || strings.TrimSpace(arr[1]) == string(os.PathSeparator) || strings.TrimSpace(arr[1]) == "/" {
 		i.currentPath = filepath.Clean(arr[1])
 	} else {
 		// If the path is relative, join it with the current path
