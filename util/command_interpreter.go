@@ -89,13 +89,18 @@ func (i *Interpreter) ExecCommand(arr []string) error {
 		i.fs, err = ExecFormat(arr[1], i.fs.Name())
 		//fmt.Println(i.fs.Name())
 		if err != nil {
-			return err
+			//return err
+			return fmt.Errorf("CANNOT CREATE FILE")
+		} else {
+			fmt.Println("OK")
 		}
 
 	case "incp":
 		err := i.Incp(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	case "cat":
 		err := i.Cat(arr)
@@ -111,21 +116,29 @@ func (i *Interpreter) ExecCommand(arr []string) error {
 		err := i.Mkdir(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	case "cd":
 		err := i.Cd(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	case "rmdir":
 		err := i.Rmdir(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	case "rm":
 		err := i.Rm(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	case "pwd":
 		err := i.Pwd()
@@ -141,31 +154,43 @@ func (i *Interpreter) ExecCommand(arr []string) error {
 		err := i.Cp(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	case "mv":
 		err := i.Mv(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	case "outcp":
 		err := i.Outcp(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	case "load":
 		err := i.Load(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	case "xcp":
 		err := i.Xcp(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	case "short":
 		err := i.Short(arr)
 		if err != nil {
 			return err
+		} else {
+			fmt.Println("OK")
 		}
 	default:
 		return fmt.Errorf("unknown command")
@@ -235,7 +260,8 @@ func (i *Interpreter) Ls(arr []string) error {
 	if len(arr) == 2 {
 		destInode, _, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 		if err != nil {
-			return fmt.Errorf("could not find destination: " + err.Error())
+			//return fmt.Errorf("could not find destination: " + err.Error())
+			return fmt.Errorf("PATH NOT FOUND (neexistující adresář)")
 		}
 		if !destInode.IsDirectory {
 			return fmt.Errorf("not a directory")
@@ -246,7 +272,7 @@ func (i *Interpreter) Ls(arr []string) error {
 		}
 	}
 
-	fmt.Printf("%-20s %-20s %-20s %-20s\n", "Name", "Inode", "Size", "References")
+	//fmt.Printf("%-20s %-20s %-20s %-20s\n", "Name", "Inode", "Size", "References")
 	for _, v := range destDir {
 		if v.Inode == 0 {
 			continue
@@ -255,7 +281,12 @@ func (i *Interpreter) Ls(arr []string) error {
 		if err != nil {
 			return fmt.Errorf("could not load inode: " + err.Error())
 		}
-		fmt.Printf("%-20s %-20d %-20d %-20d\n", v.ItemName, v.Inode, dirItemInode.FileSize, dirItemInode.References)
+		if !dirItemInode.IsDirectory {
+			fmt.Printf("-%s\n", v.ItemName)
+		} else {
+			fmt.Printf("+%s\n", v.ItemName)
+		}
+		//fmt.Printf("%-20s %-20d %-20d %-20d\n", v.ItemName, v.Inode, dirItemInode.FileSize, dirItemInode.References)
 	}
 
 	return nil
@@ -268,7 +299,8 @@ func (i *Interpreter) Mkdir(arr []string) error {
 
 	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[1]), i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find destination: " + err.Error())
+		//return fmt.Errorf("could not find destination: " + err.Error())
+		return fmt.Errorf("PATH NOT FOUND (neexistuje zadaná cesta)")
 	}
 
 	_, newDirNodeId, err := CreateDirectory(i.fs, i.superBlock, i.inodeBitmap, i.dataBitmap, destInode.NodeId)
@@ -278,7 +310,8 @@ func (i *Interpreter) Mkdir(arr []string) error {
 
 	err = AddDirItem(destInode.NodeId, int32(newDirNodeId), filepath.Base(arr[1]), i.fs, i.superBlock)
 	if err != nil {
-		return fmt.Errorf("could not add directory item: " + err.Error())
+		//return fmt.Errorf("could not add directory item: " + err.Error())
+		return fmt.Errorf("EXIST (nelze založit, již existuje)")
 	}
 
 	return nil
@@ -291,7 +324,8 @@ func (i *Interpreter) Cd(arr []string) error {
 
 	destInode, _, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find destination: " + err.Error())
+		//return fmt.Errorf("could not find destination: " + err.Error())
+		return fmt.Errorf("PATH NOT FOUND (neexistující cesta)")
 	}
 
 	isDir, err := IsInodeDirectory(i.fs, destInode.NodeId, int64(i.superBlock.InodeStartAddress))
@@ -324,7 +358,8 @@ func (i *Interpreter) Rmdir(arr []string) error {
 
 	destInode, parentInode, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find destination: " + err.Error())
+		//return fmt.Errorf("could not find destination: " + err.Error())
+		return fmt.Errorf("FILE NOT FOUND (neexistující adresář)")
 	}
 
 	if destInode.IsDirectory {
@@ -339,8 +374,11 @@ func (i *Interpreter) Rmdir(arr []string) error {
 			}
 		}
 		if inodeDirLen > 2 {
-			return fmt.Errorf("directory not empty")
+			//return fmt.Errorf("directory not empty")
+			return fmt.Errorf("NOT EMPTY (adresář obsahuje podadresáře, nebo soubory)")
 		}
+	} else {
+		return fmt.Errorf("not a directory")
 	}
 	err = RemoveDirItem(parentInode.NodeId, filepath.Base(arr[1]), i.fs, i.superBlock, true)
 	if err != nil {
@@ -357,7 +395,8 @@ func (i *Interpreter) Rm(arr []string) error {
 
 	destInode, parentInode, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find destination: " + err.Error())
+		//return fmt.Errorf("could not find destination: " + err.Error())
+		return fmt.Errorf("FILE NOT FOUND")
 	}
 
 	if destInode.IsDirectory {
@@ -383,18 +422,28 @@ func (i *Interpreter) Info(arr []string) error {
 	}
 	destInode, _, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find destination: " + err.Error())
+		//return fmt.Errorf("could not find destination: " + err.Error())
+		return fmt.Errorf("FILE NOT FOUND (není zdroj)")
 	}
-	clusterAddrs, indirectPtrAddrs, err := GetFileClusters(i.fs, destInode, i.superBlock)
-	if err != nil {
-		return fmt.Errorf("could not get file clusters: " + err.Error())
+	fmt.Printf("%s - %d - %d - ", arr[1], destInode.FileSize, destInode.NodeId)
+	for _, v := range destInode.Direct {
+		fmt.Printf("%d ", v)
 	}
-	fmt.Printf("inode: %d\n", destInode.NodeId)
-	fmt.Printf("size: %d\n", destInode.FileSize)
-	fmt.Printf("references: %d\n", destInode.References)
-	fmt.Printf("cluster addresses: %v\n", clusterAddrs)
-	fmt.Printf("extra clusters for indirect pointers: %v\n", indirectPtrAddrs)
-	fmt.Printf("is directory: %v\n", destInode.IsDirectory)
+	for _, v := range destInode.Indirect {
+		fmt.Printf("%d ", v)
+	}
+	fmt.Println()
+	/*
+		clusterAddrs, indirectPtrAddrs, err := GetFileClusters(i.fs, destInode, i.superBlock)
+		if err != nil {
+			return fmt.Errorf("could not get file clusters: " + err.Error())
+		}
+		fmt.Printf("inode: %d\n", destInode.NodeId)
+		fmt.Printf("size: %d\n", destInode.FileSize)
+		fmt.Printf("references: %d\n", destInode.References)
+		fmt.Printf("cluster addresses: %v\n", clusterAddrs)
+		fmt.Printf("extra clusters for indirect pointers: %v\n", indirectPtrAddrs)
+		fmt.Printf("is directory: %v\n", destInode.IsDirectory)*/
 	return nil
 }
 
@@ -404,11 +453,13 @@ func (i *Interpreter) Cp(arr []string) error {
 	}
 	srcInode, _, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find source: " + err.Error())
+		//return fmt.Errorf("could not find source: " + err.Error())
+		return fmt.Errorf("FILE NOT FOUND (není zdroj)")
 	}
 	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[2]), i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find destination: " + err.Error())
+		//return fmt.Errorf("could not find destination: " + err.Error())
+		return fmt.Errorf("PATH NOT FOUND (neexistuje cílová cesta)")
 	}
 	if srcInode.IsDirectory {
 		return fmt.Errorf("cannot copy a directory")
@@ -438,7 +489,8 @@ func (i *Interpreter) Mv(arr []string) error {
 	var filename string
 	srcInode, srcParentNode, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find source: " + err.Error())
+		//return fmt.Errorf("could not find source: " + err.Error())
+		return fmt.Errorf("FILE NOT FOUND (není zdroj)")
 	}
 	/* destInode, _, err := PathToInode(i.fs, arr[2], i.superBlock, i.currentDirInode)
 	if err != nil {
@@ -452,7 +504,8 @@ func (i *Interpreter) Mv(arr []string) error {
 
 	destInode, _, err := PathToInode(i.fs, filepath.Dir(arr[2]), i.superBlock, i.currentDirInode)
 	if err != nil && destInode.IsDirectory {
-		return fmt.Errorf("could not find destination: " + err.Error())
+		//return fmt.Errorf("could not find destination: " + err.Error())
+		return fmt.Errorf("PATH NOT FOUND (neexistuje cílová cesta)")
 	}
 	destInodeDir, err := LoadDirectory(i.fs, destInode, i.superBlock)
 	if err != nil {
@@ -466,7 +519,8 @@ func (i *Interpreter) Mv(arr []string) error {
 		destInode, _, err = PathToInode(i.fs, arr[2], i.superBlock, i.currentDirInode)
 		finalDestInodeId = destInode.NodeId
 		if err != nil {
-			return fmt.Errorf("could not load inode: " + err.Error())
+			//return fmt.Errorf("could not load inode: " + err.Error())
+			return fmt.Errorf("PATH NOT FOUND (neexistuje cílová cesta)")
 		}
 		if !destInode.IsDirectory {
 			fmt.Printf("%s is a file, overwriting\n", destInodeDir[itemIndex].ItemName)
@@ -506,7 +560,8 @@ func (i *Interpreter) Outcp(arr []string) error {
 	}
 	srcInode, _, err := PathToInode(i.fs, arr[1], i.superBlock, i.currentDirInode)
 	if err != nil {
-		return fmt.Errorf("could not find source: " + err.Error())
+		//return fmt.Errorf("could not find source: " + err.Error())
+		return fmt.Errorf("FILE NOT FOUND (není zdroj)")
 	}
 	data, err := ReadFileData(i.fs, srcInode, i.superBlock)
 	if err != nil {
@@ -515,7 +570,8 @@ func (i *Interpreter) Outcp(arr []string) error {
 	//write data slice to specific absolute or relative path in OS
 	err = os.WriteFile(arr[2], data, 0666)
 	if err != nil {
-		return fmt.Errorf("could not write data to file: " + err.Error())
+		//return fmt.Errorf("could not write data to file: " + err.Error())
+		return fmt.Errorf("PATH NOT FOUND (neexistuje cílová cesta)")
 	}
 
 	return nil
@@ -527,7 +583,8 @@ func (i *Interpreter) Load(arr []string) error {
 	}
 	content, err := os.ReadFile(arr[1])
 	if err != nil {
-		return fmt.Errorf("could not read file: %v", err)
+		//return fmt.Errorf("could not read file: %v", err)
+		return fmt.Errorf("FILE NOT FOUND (není zdroj)")
 	}
 
 	lines := strings.Split(string(content), "\n")
