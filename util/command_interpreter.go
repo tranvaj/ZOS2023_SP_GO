@@ -21,6 +21,10 @@ type Interpreter struct {
 	currentPath     string
 }
 
+// NewInterpreter creates a new instance of the Interpreter struct.
+// It takes a pointer to an os.File as a parameter and returns a pointer to the Interpreter.
+// The fs parameter represents the file system that the interpreter will operate on.
+// The currentPath field of the Interpreter is initialized to "/".
 func NewInterpreter(fs *os.File) *Interpreter {
 	return &Interpreter{
 		fs:          fs,

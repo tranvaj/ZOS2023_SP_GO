@@ -36,8 +36,8 @@ func main() {
 			log.Fatal(err)
 			return
 		}
-		defer fs.Close()
 	}
+	defer fs.Close()
 
 	commandInterpreter := util.NewInterpreter(fs)
 	for {
