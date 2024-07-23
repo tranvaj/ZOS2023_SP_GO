@@ -8,12 +8,10 @@ okaybro
 screen.png
 woahshort
 woahshort.jpg
-KIV_ZOS_SP.pdf
 SP.zip
 test/SP.zip
 test/SP/go.mod
 test/SP/go.sum
-test/SP/KIV_ZOS_SP.pdf
 test/SP/main.go
 test/SP/util/command_interpreter.go
 test/SP/util/command_parser.go
@@ -28,3 +26,4 @@ test/KIV_ZOS_SP/util/command_parser.go
 test/KIV_ZOS_SP/util/fs_commands.go
 test/KIV_ZOS_SP/util/fs_structs.go
 test
+.vscode
